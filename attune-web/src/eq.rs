@@ -352,6 +352,9 @@ struct BusView {
     headroom_db: f32,
     /// The composed response as (Hz, dB) for drawing.
     response: Vec<(f32, f32)>,
+    /// Crossfeed and the loudness plugin, so the cards can show what is set
+    /// rather than only what was just pressed.
+    extras: crate::extras::BusExtras,
 }
 
 #[derive(Serialize)]
@@ -464,6 +467,7 @@ async fn state() -> impl Responder {
                 macros: settings.macros,
                 headroom_db: managed.headroom_applied_db,
                 response,
+                extras: settings.extras.clone(),
             }
         })
         .collect();
@@ -888,6 +892,7 @@ mod tests {
 
         let s = BusSettings {
             voicing: "competitive".to_string(),
+            extras: Default::default(),
             manual,
             correction: Some(Curve {
                 name: "test".into(),

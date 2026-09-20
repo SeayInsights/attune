@@ -20,6 +20,11 @@
                 @click="selectedName = b.name">
           {{ b.name }}
           <span class="dot" v-if="!isFlat(b)"></span>
+          <!-- Live level, read off the bus through Windows loopback. -->
+          <span class="meter" :class="{ clip: meterFor(b.name).clipped }">
+            <span class="rms" :style="{ width: meterWidth(meterFor(b.name).rms_dbfs) }"></span>
+            <span class="peak" :style="{ left: meterWidth(meterFor(b.name).peak_dbfs) }"></span>
+          </span>
         </button>
       </div>
 
@@ -27,6 +32,21 @@
         <span class="profilechip" :title="'Saved against the ' + profile + ' profile'">
           {{ profile || '…' }}
         </span>
+        <!--
+          Hold to hear it without Attune. Press-and-hold rather than a toggle
+          because comparing is the job: you cannot judge a change you have to
+          click twice to undo, and a toggle left on is a silent way to have no
+          correction at all.
+        -->
+        <button class="compare" :class="{ held: bypassed }"
+                :disabled="busy || !apoReady"
+                title="Hold to hear the buses without any of this"
+                @pointerdown="setBypass(true)" @pointerup="setBypass(false)"
+                @pointerleave="setBypass(false)"
+                @keydown.space.prevent="setBypass(true)"
+                @keyup.space.prevent="setBypass(false)">
+          {{ bypassed ? 'Bypassed' : 'Hold to compare' }}
+        </button>
         <button @click="verify" :disabled="busy || !apoReady">Test</button>
         <button class="accent" @click="applyAll" :disabled="busy || !apoReady">Apply</button>
       </div>
@@ -43,6 +63,17 @@
          :class="{ missing: apo && !apo.installed, wiped: apo && apo.installed && !apo.attached }"
          v-if="apo && (!apo.included || !apo.attached)">
       {{ apo.guidance }}
+    </div>
+    <!--
+      Anything Equalizer APO loads before Attune's own config is already in the
+      signal by the time a correction runs, so a measurement will not match the
+      curve on screen and nothing on screen would explain why.
+    -->
+    <div class="apo missing" v-if="interference.length">
+      Equalizer APO is loading this before Attune, so it colours everything
+      here: <code>{{ interference.join(' · ') }}</code>. Comment those lines out
+      in Equalizer APO&rsquo;s <code>config.txt</code> for measurements that
+      match what you see.
     </div>
     <div class="bad" v-if="error">{{ error }}</div>
     <div class="note" v-if="status">{{ status }}</div>
@@ -214,12 +245,137 @@
                : 'Reading spatial audio state…' }}
           </div>
 
-          <div class="hint">
-            Crossfeed &mdash; softening headphones' unnaturally hard left/right
-            split &mdash; is coming next; it is a different thing from surround
-            virtualisation and I would rather label it honestly than call it
-            spatial audio.
+        </div>
+      </div>
+
+      <!-- Crossfeed + loudness ---------------------------------------- -->
+      <div class="cards">
+        <div class="card">
+          <div class="cardhead">
+            <span class="cardtitle">Crossfeed</span>
+            <span class="cardnote" v-if="busExtras.crossfeed">
+              &minus;{{ crossfeedHeadroom.toFixed(1) }} dB so it cannot clip
+            </span>
           </div>
+
+          <div class="formats">
+            <button class="format" :class="{ on: !busExtras.crossfeed }"
+                    :disabled="extrasBusy" @click="setCrossfeed(null)">
+              <span class="fname">Off</span>
+              <span class="fnote">Hard left/right, the way headphones do it.</span>
+            </button>
+            <button v-for="p in crossfeedPresets" :key="p.name" class="format"
+                    :class="{ on: presetActive(p) }"
+                    :disabled="extrasBusy" @click="setCrossfeed(p.settings)">
+              <span class="fname">{{ p.name }}</span>
+              <span class="fnote">{{ p.description }}</span>
+            </button>
+          </div>
+
+          <template v-if="busExtras.crossfeed">
+            <div class="macro">
+              <label>level</label>
+              <input type="range" :min="limits.level_db[0]" :max="limits.level_db[1]" step="0.5"
+                     :value="busExtras.crossfeed.level_db" :disabled="extrasBusy"
+                     @change="tweakCrossfeed('level_db', $event.target.value)"/>
+              <span class="val">{{ busExtras.crossfeed.level_db.toFixed(1) }}</span>
+            </div>
+            <div class="macro">
+              <label>cutoff</label>
+              <input type="range" :min="limits.cutoff_hz[0]" :max="limits.cutoff_hz[1]" step="25"
+                     :value="busExtras.crossfeed.cutoff_hz" :disabled="extrasBusy"
+                     @change="tweakCrossfeed('cutoff_hz', $event.target.value)"/>
+              <span class="val">{{ busExtras.crossfeed.cutoff_hz.toFixed(0) }}</span>
+            </div>
+            <div class="macro">
+              <label>delay</label>
+              <input type="range" :min="limits.delay_us[0]" :max="limits.delay_us[1]" step="10"
+                     :value="busExtras.crossfeed.delay_us" :disabled="extrasBusy"
+                     @change="tweakCrossfeed('delay_us', $event.target.value)"/>
+              <span class="val">{{ busExtras.crossfeed.delay_us.toFixed(0) }}</span>
+            </div>
+          </template>
+
+          <label class="check">
+            <input type="checkbox" v-model="extrasAllBuses"/>
+            Set on all four buses
+          </label>
+          <div class="hint">
+            On speakers your left ear hears the right speaker, later and duller,
+            because your head is in the way. Headphones remove that, so
+            hard-panned mixes sit inside one ear. This puts a little of it back.
+            It is not surround &mdash; it will not help you hear someone behind
+            you, which is what the Spatial card is for.
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cardhead">
+            <span class="cardtitle">Loudness</span>
+            <span class="cardnote" v-if="pluginLoaded === false">
+              Equalizer APO did not load it
+            </span>
+          </div>
+
+          <div class="formats" v-if="plugins.length">
+            <button class="format" :class="{ on: !busExtras.plugin }"
+                    :disabled="extrasBusy" @click="setPlugin(null)">
+              <span class="fname">Off</span>
+            </button>
+            <button v-for="p in plugins" :key="p" class="format"
+                    :class="{ on: busExtras.plugin === p }"
+                    :disabled="extrasBusy" @click="setPlugin(p)">
+              <span class="fname">{{ p }}</span>
+            </button>
+          </div>
+
+          <div class="hint">{{ pluginGuidance }}</div>
+        </div>
+      </div>
+
+      <!-- Per-game profiles ------------------------------------------- -->
+      <div class="card">
+        <div class="cardhead">
+          <span class="cardtitle">Per-game profiles</span>
+          <span class="cardnote" v-if="foreground">
+            in front right now: {{ foreground }}
+          </span>
+          <label class="check switch">
+            <input type="checkbox" :checked="autoswitch.enabled" :disabled="extrasBusy"
+                   @change="setAutoswitch({ enabled: $event.target.checked })"/>
+            {{ autoswitch.enabled ? 'On' : 'Off' }}
+          </label>
+        </div>
+
+        <div class="rules" v-if="autoswitch.rules && autoswitch.rules.length">
+          <div class="rule" v-for="r in autoswitch.rules" :key="r.executable">
+            <input type="checkbox" :checked="r.enabled" :disabled="extrasBusy"
+                   :title="r.enabled ? 'Active' : 'Parked'"
+                   @change="setAutoswitch({ toggle: [r.executable, $event.target.checked] })"/>
+            <span class="exe">{{ r.executable }}</span>
+            <select :value="r.profile" :disabled="extrasBusy"
+                    @change="setAutoswitch({ set: [r.executable, $event.target.value] })">
+              <option v-for="p in profiles" :key="p" :value="p">{{ p }}</option>
+            </select>
+            <button class="ghost" :disabled="extrasBusy"
+                    @click="setAutoswitch({ remove: r.executable })">Remove</button>
+          </div>
+        </div>
+        <div class="hint" v-else>No rules yet.</div>
+
+        <div class="inline addrule">
+          <input type="text" v-model="newExe" :placeholder="foreground || 'something.exe'"/>
+          <select v-model="newProfile">
+            <option value="">choose a profile</option>
+            <option v-for="p in profiles" :key="p" :value="p">{{ p }}</option>
+          </select>
+          <button class="ghost" :disabled="extrasBusy || !newProfile" @click="addRule">Add</button>
+        </div>
+
+        <div class="hint">
+          Matched on the executable name, because window titles change with
+          what is open in them. Nothing reverts when you alt-tab away &mdash;
+          leaving a game should not change how your music sounds.
         </div>
       </div>
 
@@ -292,6 +448,18 @@ export default {
       hits: [],
       searched: false,
       spatial: null,
+      bypassed: false,
+      extras: null,
+      extrasBusy: false,
+      extrasAllBuses: true,
+      pluginLoaded: null,
+      autoswitch: { enabled: false, rules: [] },
+      foreground: null,
+      newExe: "",
+      newProfile: "",
+      levels: {},
+      meterTimer: null,
+      autoswitchTimer: null,
       spatialAllBuses: true,
       spatialBusy: false,
       spatialError: null,
@@ -320,6 +488,41 @@ export default {
     },
     // Derived from the limit the daemon reports rather than hard-coded, so the
     // scale still reads correctly if that limit ever changes.
+    interference() {
+      return (this.extras && this.extras.interference) || [];
+    },
+    crossfeedPresets() {
+      return (this.extras && this.extras.crossfeed_presets) || [];
+    },
+    plugins() {
+      return (this.extras && this.extras.plugins) || [];
+    },
+    pluginGuidance() {
+      return (this.extras && this.extras.plugin_guidance) || "";
+    },
+    profiles() {
+      return (this.extras && this.extras.profiles) || [];
+    },
+    limits() {
+      return (
+        (this.extras && this.extras.crossfeed_limits) || {
+          level_db: [1, 12],
+          cutoff_hz: [300, 2000],
+          delay_us: [0, 600],
+        }
+      );
+    },
+    busExtras() {
+      return (this.selected && this.selected.extras) || { crossfeed: null, plugin: null };
+    },
+    // Mirrors the server's arithmetic so the cost of crossfeed is visible
+    // while dragging, rather than only after the round trip.
+    crossfeedHeadroom() {
+      const c = this.busExtras.crossfeed;
+      if (!c) return 0;
+      const g = Math.pow(10, -c.level_db / 20);
+      return 20 * Math.log10(1 + g);
+    },
     // Spatial state is per endpoint, so it follows the selected bus rather
     // than being a single setting for the tab.
     spatialBus() {
@@ -355,12 +558,24 @@ export default {
   mounted() {
     this.load();
     this.loadSpatial();
+    this.loadExtras();
+    this.loadAutoswitch();
+    // Meters poll while the tab is open. The daemon stops capturing five
+    // seconds after the last read, so closing the tab stops the loopback
+    // streams without anything having to say so.
+    this.meterTimer = setInterval(() => this.pollMeters(), 100);
+    this.autoswitchTimer = setInterval(() => this.loadAutoswitch(), 3000);
   },
 
   beforeUnmount() {
     if (this.searchTimer) clearTimeout(this.searchTimer);
     if (this.saveTimer) clearTimeout(this.saveTimer);
+    if (this.meterTimer) clearInterval(this.meterTimer);
+    if (this.autoswitchTimer) clearInterval(this.autoswitchTimer);
     this.releasePointer();
+    // Leaving the tab while bypassed would leave the audio uncorrected with
+    // nothing on screen to explain it.
+    if (this.bypassed) this.setBypass(false);
   },
 
   methods: {
@@ -576,6 +791,151 @@ export default {
       }
     },
 
+    // ---- meters ----
+
+    meterFor(bus) {
+      return this.levels[bus] || { rms_dbfs: -90, peak_dbfs: -90, clipped: false };
+    },
+    /// Map dBFS to a bar width. Linear in dB rather than in amplitude,
+    /// because that is how loudness reads: a linear-amplitude meter spends
+    /// nine tenths of its travel in the top 20 dB and shows nothing useful.
+    meterWidth(dbfs) {
+      const floor = -60;
+      const clamped = Math.max(floor, Math.min(0, dbfs));
+      return ((clamped - floor) / -floor) * 100 + "%";
+    },
+    async pollMeters() {
+      try {
+        const r = await this.getJSON("/api/attune/extras/meters");
+        this.levels = r.levels || {};
+      } catch (e) {
+        // Metering is a nicety. If it stops working the rest of the tab
+        // should carry on without an error banner over it.
+        this.levels = {};
+      }
+    },
+
+    // ---- extras ----
+
+    async loadExtras() {
+      try {
+        this.extras = await this.getJSON("/api/attune/extras/state");
+        this.bypassed = this.extras.bypassed;
+      } catch (e) {
+        this.extras = null;
+      }
+    },
+
+    async setBypass(on) {
+      if (on === this.bypassed) return;
+      this.bypassed = on;
+      try {
+        await this.getJSON("/api/attune/extras/bypass", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ on }),
+        });
+      } catch (e) {
+        this.error = e.message;
+        this.bypassed = !on;
+      }
+    },
+
+    presetActive(preset) {
+      const c = this.busExtras.crossfeed;
+      if (!c) return false;
+      const s = preset.settings;
+      return (
+        Math.abs(c.level_db - s.level_db) < 0.01 &&
+        Math.abs(c.cutoff_hz - s.cutoff_hz) < 0.01 &&
+        Math.abs(c.delay_us - s.delay_us) < 0.01
+      );
+    },
+
+    async setCrossfeed(settings) {
+      this.extrasBusy = true;
+      try {
+        await this.getJSON("/api/attune/extras/crossfeed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bus: this.selectedName,
+            crossfeed: settings,
+            all_buses: this.extrasAllBuses,
+          }),
+        });
+        await this.load();
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.extrasBusy = false;
+      }
+    },
+
+    tweakCrossfeed(field, value) {
+      const next = { ...this.busExtras.crossfeed };
+      next[field] = parseFloat(value);
+      this.setCrossfeed(next);
+    },
+
+    async setPlugin(plugin) {
+      this.extrasBusy = true;
+      try {
+        const r = await this.getJSON("/api/attune/extras/plugin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bus: this.selectedName,
+            plugin,
+            all_buses: this.extrasAllBuses,
+          }),
+        });
+        // null means undetermined, which is not the same as "did not load".
+        this.pluginLoaded = plugin ? r.loaded : null;
+        await this.load();
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.extrasBusy = false;
+      }
+    },
+
+    // ---- per-game profiles ----
+
+    async loadAutoswitch() {
+      try {
+        const r = await this.getJSON("/api/attune/extras/autoswitch");
+        this.autoswitch = r.rules;
+        this.foreground = r.foreground;
+      } catch (e) {
+        // Leave whatever was last known rather than blanking the card.
+      }
+    },
+
+    async setAutoswitch(change) {
+      this.extrasBusy = true;
+      try {
+        const r = await this.getJSON("/api/attune/extras/autoswitch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(change),
+        });
+        this.autoswitch = r.rules;
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.extrasBusy = false;
+      }
+    },
+
+    addRule() {
+      const exe = (this.newExe || this.foreground || "").trim();
+      if (!exe || !this.newProfile) return;
+      this.setAutoswitch({ set: [exe, this.newProfile] });
+      this.newExe = "";
+      this.newProfile = "";
+    },
+
     // ---- spatial audio ----
 
     async loadSpatial() {
@@ -684,13 +1044,39 @@ export default {
           gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
 .bustabs { display: flex; gap: 2px; }
 .bustab { position: relative; background: none; color: #8d9591; border: 0;
-          border-bottom: 2px solid transparent; padding: 8px 18px;
+          border-bottom: 2px solid transparent; padding: 8px 18px 12px;
           font-family: inherit; font-size: 14px; cursor: pointer; }
 .bustab.on { color: #fff; border-bottom-color: #59b1b6; }
 .bustab .dot { position: absolute; top: 6px; right: 6px; width: 5px; height: 5px;
                border-radius: 50%; background: #59b1b6; }
 
 .topright { display: flex; align-items: center; gap: 8px; }
+.compare { min-width: 0; user-select: none; touch-action: none; }
+.compare.held { background-color: #d9a441; color: #1b1f1e; font-weight: 600; }
+
+/* A bar under each bus name. Linear in dB, because a linear-amplitude meter
+   spends nine tenths of its travel in the top 20 dB. */
+.meter { position: absolute; left: 10px; right: 10px; bottom: 2px; height: 3px;
+         background: #1b1f1e; border-radius: 2px; overflow: hidden; }
+.meter .rms { position: absolute; left: 0; top: 0; bottom: 0; background: #59b1b6;
+              transition: width .08s linear; }
+.meter .peak { position: absolute; top: 0; bottom: 0; width: 2px;
+               background: #b4bcb8; transition: left .08s linear; }
+.meter.clip { background: #e0655b; }
+.meter.clip .rms { background: #e0655b; }
+
+.rules { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.rule { display: flex; align-items: center; gap: 8px; background: #252927;
+        padding: 6px 10px; }
+.rule .exe { flex: 1; font-size: 12px; font-variant-numeric: tabular-nums; }
+.rule select { width: auto; min-width: 150px; }
+.rule input[type="checkbox"] { width: auto; }
+.addrule { gap: 6px; }
+.addrule input[type="text"] { flex: 1; }
+.addrule select { width: auto; min-width: 150px; }
+.check.switch { margin-left: auto; }
+code { background: #1b1f1e; padding: 1px 5px; border-radius: 3px;
+       font-family: inherit; font-size: 11px; }
 .profilechip { background: #252927; color: #8d9591; font-size: 11px;
                padding: 5px 9px; border-radius: 10px; }
 

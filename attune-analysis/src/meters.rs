@@ -311,7 +311,7 @@ fn spawn_meter(
         loop {
             std::thread::sleep(Duration::from_millis(250));
             let stale = match shared.lock() {
-                Ok(s) => !s.last_read.is_some_and(|at| at.elapsed() < IDLE_TIMEOUT),
+                Ok(s) => s.last_read.is_none_or(|at| at.elapsed() >= IDLE_TIMEOUT),
                 Err(_) => true,
             };
             if stale {

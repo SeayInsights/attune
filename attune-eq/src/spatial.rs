@@ -505,7 +505,7 @@ pub fn set(bus: &str, subtype: &str) -> Result<Status, SpatialError> {
         config.SetDefaultSpatialAudioFormatAsync(&wanted)?;
 
         for _ in 0..POLL_ATTEMPTS {
-            if config.ActiveSpatialAudioFormat()?.to_string() == subtype_owned {
+            if config.ActiveSpatialAudioFormat()? == wanted {
                 log::debug!("spatial format on {device} is now {subtype_owned}");
                 return Ok(());
             }
