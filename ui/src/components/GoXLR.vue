@@ -18,13 +18,6 @@
         <Tab id="mic" :name="$t('message.navigation.microphone')">
           <Mic/>
         </Tab>
-        <!--
-          Attune. A literal name rather than a $t() key, so this tab needs no
-          entry added to every language file upstream ships.
-        -->
-        <Tab id="attune" name="Attune">
-          <AttuneTab/>
-        </Tab>
         <Tab id="mixer" :name="$t('message.navigation.mixer')" selected>
           <ContentContainer>
             <Mixer/>
@@ -135,7 +128,6 @@ import Tabs from "@/components/tabs/Tabs.vue";
 import Tab from "@/components/tabs/Tab.vue";
 import Routing from "@/components/sections/Routing.vue";
 import Mic from "@/components/sections/Mic.vue";
-import AttuneTab from "@/components/sections/AttuneTab.vue";
 import DeviceSelector from "@/components/sections/DeviceSelector.vue";
 import {store} from "@/store";
 import Cough from "@/components/sections/Cough.vue";
@@ -159,7 +151,6 @@ export default {
   name: "GoXLR",
   expose: ['openFirmwareUpdateProgressModal'],
   components: {
-    AttuneTab,
     ProgressBar,
     AccessibleModal,
     Language,

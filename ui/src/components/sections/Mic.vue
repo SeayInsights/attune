@@ -11,6 +11,7 @@
       <Equaliser/>
       <Compressor/>
       <MicExtra />
+      <AttuneTuner />
     </ContentContainer>
   </div>
 </template>
@@ -20,6 +21,7 @@ import Gate from "./mic/Gate.vue";
 import Equaliser from "./mic/Equalizer.vue";
 import Compressor from "./mic/Compressor.vue";
 import MicExtra from "./mic/MicExtra.vue";
+import AttuneTuner from "./mic/AttuneTuner.vue";
 import MicProfileHandler from "@/components/profiles/handlers/MicProfileHandler.vue";
 import MicSetupButton from "@/components/sections/system/modals/MicSetupButton.vue";
 import ContentBox from "@/components/ContentBox.vue";
@@ -29,7 +31,8 @@ export default {
   name: "MicSections",
   components: {
     ContentContainer,
-    ContentBox, MicSetupButton, MicProfileHandler, MicExtra, Compressor, Equaliser, Gate},
+    ContentBox, MicSetupButton, MicProfileHandler, MicExtra, Compressor, Equaliser, Gate,
+    AttuneTuner},
 
   methods: {
     mic_open: function() {
