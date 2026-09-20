@@ -47,7 +47,7 @@ async fn main() -> ExitCode {
 
     println!("  MIC CHAIN");
     println!("  ---------");
-    println!("  {:<22} {}", "Mic type", chain.mic_type);
+    println!("  {:<22} {:?}", "Mic type", chain.mic_type);
     println!("  {:<22} {} dB", "Preamp gain", chain.gain_db);
     println!(
         "  {:<22} {} dB  (attenuation {}%, {})",

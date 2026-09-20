@@ -8,7 +8,7 @@
 //! The findings here are heuristics with stated reasoning, not measurements. Each
 //! one says why it fired so the operator can disagree with it.
 
-use goxlr_types::CompressorRatio;
+use goxlr_types::{CompressorRatio, MicrophoneType};
 
 use crate::settings::MicChain;
 
@@ -139,7 +139,7 @@ pub fn diagnose(chain: &MicChain) -> Vec<Finding> {
 
     // --- Preamp -----------------------------------------------------------
 
-    if chain.mic_type == "Dynamic" && chain.gain_db < DYNAMIC_GAIN_LOW_DB {
+    if chain.mic_type == MicrophoneType::Dynamic && chain.gain_db < DYNAMIC_GAIN_LOW_DB {
         findings.push(Finding {
             severity: Severity::Warning,
             stage: "Preamp",

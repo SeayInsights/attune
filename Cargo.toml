@@ -18,6 +18,7 @@ members = [
     # mergeable -- edits to the crates above should be rare and deliberate.
     "attune-control",
     "attune-analysis",
+    "attune-tuner",
 ]
 
 [workspace.package]

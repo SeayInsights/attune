@@ -7,7 +7,7 @@
 //! declines must not look like a success.
 
 use goxlr_ipc::{DaemonRequest, GoXLRCommand};
-use goxlr_types::CompressorRatio;
+use goxlr_types::{CompressorRatio, MicrophoneType};
 
 use crate::ControlError;
 use crate::client::DaemonClient;
@@ -15,9 +15,14 @@ use crate::client::DaemonClient;
 /// A snapshot of the mic chain, flattened out of the daemon's nested status.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MicChain {
-    /// Which preamp the device is using. The Shure MV7 over XLR is `Dynamic`.
-    pub mic_type: String,
-    /// Preamp gain in dB for the active mic type.
+    /// Which preamp the device is using. An XLR dynamic mic is `Dynamic`; a
+    /// phantom-powered condenser is `Condenser`; the 3.5 mm input is `Jack`.
+    ///
+    /// Typed rather than stringly, because every tuning decision downstream
+    /// branches on it -- a condenser and a dynamic want very different gain.
+    pub mic_type: MicrophoneType,
+    /// Preamp gain in dB for the active mic type. Each type has its own stored
+    /// gain on the device, so switching type does not carry gain across.
     pub gain_db: u16,
 
     /// Gate threshold in dB. Below this, the gate closes.
@@ -44,7 +49,7 @@ impl DaemonClient {
         let gain_db = mic.mic_gains[mic.mic_type];
 
         Ok(MicChain {
-            mic_type: format!("{:?}", mic.mic_type),
+            mic_type: mic.mic_type,
             gain_db,
             gate_threshold_db: mic.noise_gate.threshold,
             gate_attenuation: mic.noise_gate.attenuation,
@@ -99,6 +104,29 @@ impl DaemonClient {
             return Err(ControlError::WriteNotApplied {
                 field: "compressor_threshold_db".to_string(),
                 requested: threshold_db.to_string(),
+                actual: actual.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Set the preamp gain for the currently active mic type, then confirm it.
+    ///
+    /// Gain is stored per mic type on the device, so this deliberately targets
+    /// the active one. Writing gain for a type that is not selected would report
+    /// success and change nothing audible, which is exactly the class of silent
+    /// no-op the verification here exists to catch.
+    pub async fn set_mic_gain(&self, serial: &str, gain_db: u16) -> Result<(), ControlError> {
+        let mic_type = self.mic_chain(serial).await?.mic_type;
+
+        self.command(serial, GoXLRCommand::SetMicrophoneGain(mic_type, gain_db))
+            .await?;
+
+        let actual = self.mic_chain(serial).await?.gain_db;
+        if actual != gain_db {
+            return Err(ControlError::WriteNotApplied {
+                field: format!("gain_db[{mic_type:?}]"),
+                requested: gain_db.to_string(),
                 actual: actual.to_string(),
             });
         }

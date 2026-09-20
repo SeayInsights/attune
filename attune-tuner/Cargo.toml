@@ -1,0 +1,22 @@
+[package]
+name = "attune-tuner"
+description = "Derives GoXLR mic settings from a measurement, and applies them through the verified control plane."
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+log = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+goxlr-types = { path = "../types" }
+attune-control = { path = "../attune-control" }
+attune-analysis = { path = "../attune-analysis" }
+
+[[bin]]
+name = "attune-tune"
+path = "src/bin/attune_tune.rs"

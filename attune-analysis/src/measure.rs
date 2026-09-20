@@ -71,13 +71,80 @@ pub struct Measurement {
     pub total_frames: usize,
 }
 
+/// Minimum absolute speech frames.
+const MIN_SPEECH_FRAMES: usize = 20;
+
+/// Minimum proportion of the capture that must contain speech.
+///
+/// An absolute count alone is not enough, and getting this wrong has already
+/// caused real damage: a capture with 40 speech frames out of 750 cleared a
+/// count-only check, and the tuner then derived a 42 dB gain correction from
+/// what was effectively silence and pinned a preamp to its maximum. Five percent
+/// of a recording is not a measurement of a voice.
+const MIN_SPEECH_FRACTION: f32 = 0.15;
+
+/// No working microphone carrying a human voice measures below this.
+///
+/// Anything quieter is a room being recorded, not a person, however many frames
+/// happened to clear the relative threshold.
+const MIN_PLAUSIBLE_SPEECH_DBFS: f32 = -70.0;
+
+/// Why a measurement can or cannot be used.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Usability {
+    /// Enough speech, at a plausible level.
+    Usable,
+    /// Too little of the capture contained speech.
+    TooLittleSpeech { frames: usize, total: usize },
+    /// Speech was detected but at a level no real voice produces.
+    ImplausiblyQuiet { level_dbfs: f32 },
+}
+
+impl Usability {
+    /// One line explaining the verdict, for the operator.
+    pub fn explain(&self) -> String {
+        match self {
+            Usability::Usable => "Capture is usable.".to_string(),
+            Usability::TooLittleSpeech { frames, total } => format!(
+                "Only {frames} of {total} frames contained speech ({:.0}%). \
+                 Nothing can be derived from this. Record again and speak \
+                 throughout -- the recording does not wait for you to start.",
+                (*frames as f32 / *total.max(&1) as f32) * 100.0
+            ),
+            Usability::ImplausiblyQuiet { level_dbfs } => format!(
+                "Speech measured {level_dbfs:.1} dBFS, which is below anything a \
+                 working microphone produces for a human voice. This is a \
+                 recording of a room. Check the mic is connected, unmuted, and \
+                 that the right input device was captured."
+            ),
+        }
+    }
+}
+
 impl Measurement {
-    /// Whether there was enough speech for the spectral figures to mean anything.
-    ///
-    /// Reported rather than silently assumed, because a measurement taken in
-    /// silence produces numbers that look perfectly plausible.
+    /// Whether this measurement can be reasoned from.
+    pub fn usability(&self) -> Usability {
+        let fraction = self.speech_frames as f32 / self.total_frames.max(1) as f32;
+
+        if self.speech_frames < MIN_SPEECH_FRAMES || fraction < MIN_SPEECH_FRACTION {
+            return Usability::TooLittleSpeech {
+                frames: self.speech_frames,
+                total: self.total_frames,
+            };
+        }
+
+        if self.speech_level_dbfs < MIN_PLAUSIBLE_SPEECH_DBFS {
+            return Usability::ImplausiblyQuiet {
+                level_dbfs: self.speech_level_dbfs,
+            };
+        }
+
+        Usability::Usable
+    }
+
+    /// Whether there was enough speech for the figures to mean anything.
     pub fn has_usable_speech(&self) -> bool {
-        self.speech_frames >= 20
+        self.usability() == Usability::Usable
     }
 }
 
