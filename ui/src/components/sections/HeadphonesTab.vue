@@ -10,7 +10,7 @@
   top left is the only one.
 -->
 <template>
-  <div class="tab">
+  <div class="hptab">
 
     <!-- Which bus ------------------------------------------------------ -->
     <div class="topbar">
@@ -585,7 +585,7 @@ export default {
 </script>
 
 <style scoped>
-.tab { padding: 22px 30px 50px; color: #fff; text-align: left; }
+.hptab { padding: 22px 30px 50px; color: #fff; text-align: left; }
 
 .topbar { display: flex; justify-content: space-between; align-items: center;
           gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
@@ -633,8 +633,13 @@ export default {
 .plot { display: block; width: 100%; height: 100%; }
 
 /* Handles are HTML, not SVG, so preserveAspectRatio="none" on the plot cannot
-   squash them into ovals. Positioned in percent, centred on their own point. */
-.handle { position: absolute; width: 16px; height: 16px; padding: 0;
+   squash them into ovals. Positioned in percent, centred on their own point.
+   min-width/max-width are stated because goxlr-ui ships an unscoped
+   `.tab button { min-width: 150px }`, which a scoped `width: 16px` loses to.
+   This component no longer uses the class `tab`, so that rule cannot reach it
+   any more -- these are here so the next such collision cannot either. */
+.handle { position: absolute; width: 16px; height: 16px;
+          min-width: 0; max-width: none; padding: 0;
           margin: 0; border-radius: 50%; border: 2px solid #1b1f1e;
           transform: translate(-50%, -50%); cursor: ns-resize;
           touch-action: none; transition: width .1s, height .1s; }
