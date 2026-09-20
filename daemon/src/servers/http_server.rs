@@ -539,6 +539,21 @@ async fn default(req: HttpRequest) -> HttpResponse {
         let mime_type = MimeGuess::from_path(path).first_or_octet_stream();
         let mut builder = HttpResponse::Ok();
         builder.insert_header(ContentType(mime_type));
+
+        // Attune addition. Without any cache header the browser is free to
+        // apply heuristic caching, and it does -- which for a Vite build is
+        // the worst case: the asset filenames carry a content hash and so are
+        // safe to cache forever, but index.html is the only thing that names
+        // them. A stale index.html therefore pins the UI to an old bundle
+        // indefinitely, and the symptom is an update that appears to have
+        // silently not happened. Say explicitly which is which.
+        let cache = if path_part.starts_with("assets/") {
+            "public, max-age=31536000, immutable"
+        } else {
+            "no-cache"
+        };
+        builder.insert_header(("Cache-Control", cache));
+
         builder.body(file.contents())
     } else {
         HttpResponse::NotFound().finish()
