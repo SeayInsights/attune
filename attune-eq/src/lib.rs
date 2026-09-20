@@ -27,6 +27,7 @@
 //! voicing are different things, and they compose.
 
 pub mod apo;
+pub mod autoeq;
 pub mod curve;
 pub mod headroom;
 pub mod profiles;

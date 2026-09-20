@@ -18,7 +18,126 @@ use serde::{Deserialize, Serialize};
 const BUSES: &[&str] = &["Game", "Music", "Chat", "System"];
 
 pub fn services(cfg: &mut web::ServiceConfig) {
-    cfg.service(state).service(apply).service(import);
+    cfg.service(state)
+        .service(apply)
+        .service(import)
+        .service(search)
+        .service(import_autoeq);
+}
+
+/// AutoEQ's index, fetched once and kept.
+///
+/// It is ~830 KB and changes when new measurements are published, which is not
+/// often enough to justify re-fetching per keystroke. A process restart picks up
+/// anything new.
+static INDEX: tokio::sync::OnceCell<Vec<attune_eq::autoeq::Entry>> =
+    tokio::sync::OnceCell::const_new();
+
+async fn index() -> Result<&'static Vec<attune_eq::autoeq::Entry>, String> {
+    INDEX
+        .get_or_try_init(|| async {
+            let text = reqwest::get(attune_eq::autoeq::INDEX_URL)
+                .await
+                .map_err(|e| format!("could not reach AutoEQ: {e}"))?
+                .text()
+                .await
+                .map_err(|e| format!("could not read AutoEQ's index: {e}"))?;
+
+            let entries = attune_eq::autoeq::parse_index(&text);
+            if entries.is_empty() {
+                return Err("AutoEQ's index was empty or its format changed".to_string());
+            }
+            Ok(entries)
+        })
+        .await
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: String,
+}
+
+#[derive(Serialize)]
+struct SearchHit {
+    name: String,
+    provenance: String,
+    path: String,
+}
+
+#[get("/api/attune/eq/search")]
+async fn search(query: web::Query<SearchQuery>) -> impl Responder {
+    let entries = match index().await {
+        Ok(e) => e,
+        Err(e) => return error(&e),
+    };
+
+    let hits: Vec<SearchHit> = attune_eq::autoeq::search(entries, &query.q, 25)
+        .into_iter()
+        .map(|e| SearchHit {
+            name: e.name.clone(),
+            provenance: e.provenance(),
+            path: e.path.clone(),
+        })
+        .collect();
+
+    HttpResponse::Ok().json(hits)
+}
+
+#[derive(Deserialize)]
+struct AutoEqImport {
+    bus: String,
+    /// Path within AutoEQ's results, as returned by the search.
+    path: String,
+}
+
+#[post("/api/attune/eq/import-autoeq")]
+async fn import_autoeq(req: web::Json<AutoEqImport>) -> impl Responder {
+    let entries = match index().await {
+        Ok(e) => e,
+        Err(e) => return error(&e),
+    };
+
+    // Resolve against the index rather than trusting the path from the request:
+    // this endpoint fetches a URL built from it, and an arbitrary path would
+    // make that a request-controlled fetch.
+    let Some(entry) = entries.iter().find(|e| e.path == req.path) else {
+        return error("that measurement is not in AutoEQ's index");
+    };
+
+    let text = match reqwest::get(entry.parametric_url()).await {
+        Ok(r) if r.status().is_success() => match r.text().await {
+            Ok(t) => t,
+            Err(e) => return error(&format!("could not read the curve: {e}")),
+        },
+        Ok(r) => {
+            return error(&format!(
+                "AutoEQ returned {} for that measurement -- it may not publish a \
+                 parametric export for it",
+                r.status()
+            ));
+        }
+        Err(e) => return error(&format!("could not reach AutoEQ: {e}")),
+    };
+
+    let name = format!("{} ({})", entry.name, entry.provenance());
+    let curve = match Curve::parse(&name, &text) {
+        Ok(c) => c,
+        Err(e) => return error(&e.to_string()),
+    };
+
+    let filters = curve.filters.len();
+    let mut settings = load();
+    settings.corrections.insert(req.bus.clone(), curve);
+
+    if let Err(e) = save(&settings) {
+        return error(&format!("could not save correction: {e}"));
+    }
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "imported": true,
+        "name": name,
+        "filters": filters,
+    }))
 }
 
 /// Where Attune keeps its own settings.

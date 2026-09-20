@@ -57,18 +57,37 @@
       <div class="hint" v-if="result">{{ result }}</div>
 
       <div class="import" v-if="importing">
-        <div class="ititle">Import a correction for {{ importing.name }}</div>
+        <div class="ititle">Correction for {{ importing.name }}</div>
         <div class="hint">
-          Paste an AutoEQ ParametricEQ export. Attune does not ship headphone
+          Search AutoEQ's published measurements. Attune ships no headphone
           curves &mdash; a correction has to come from a real measurement of your
           model, and inventing one would be worse than having none.
         </div>
-        <input v-model="importName" placeholder="Headphone model, e.g. DT 990 Pro"/>
-        <textarea v-model="importText" rows="5"
-                  placeholder="Preamp: -6.8 dB&#10;Filter 1: ON LSC Fc 105 Hz Gain 5.5 dB Q 0.70&#10;..."></textarea>
+
+        <input v-model="query" @input="runSearch" placeholder="Search, e.g. DT 990 Pro"/>
+
+        <div class="hits" v-if="hits.length">
+          <button class="hit" v-for="h in hits" :key="h.path"
+                  @click="importFromAutoEq(h)" :disabled="busy">
+            <span class="hname">{{ h.name }}</span>
+            <span class="hprov">{{ h.provenance }}</span>
+          </button>
+        </div>
+        <div class="hint" v-else-if="searched && query.trim()">
+          Nothing matched. The same headphone is often measured by several
+          people on different rigs, so try a shorter query.
+        </div>
+
+        <details>
+          <summary>Paste a curve instead</summary>
+          <input v-model="importName" placeholder="Name, e.g. DT 990 Pro"/>
+          <textarea v-model="importText" rows="4"
+                    placeholder="Preamp: -6.8 dB&#10;Filter 1: ON LSC Fc 105 Hz Gain 5.5 dB Q 0.70&#10;..."></textarea>
+          <button class="accent" @click="doImport" :disabled="busy || !importText.trim()">Import pasted</button>
+        </details>
+
         <div class="controls">
-          <button @click="importing = null" :disabled="busy">Cancel</button>
-          <button class="accent" @click="doImport" :disabled="busy || !importText.trim()">Import</button>
+          <button @click="closeImport" :disabled="busy">Close</button>
         </div>
       </div>
 
@@ -94,6 +113,10 @@ export default {
       importing: null,
       importName: "",
       importText: "",
+      query: "",
+      hits: [],
+      searched: false,
+      searchTimer: null,
     };
   },
 
@@ -186,8 +209,58 @@ export default {
 
     openImport(bus) {
       this.importing = bus;
-      this.importName = bus.correction_name || "";
+      this.importName = "";
       this.importText = "";
+      this.query = "";
+      this.hits = [];
+      this.searched = false;
+    },
+
+    closeImport() {
+      this.importing = null;
+      if (this.searchTimer) clearTimeout(this.searchTimer);
+      this.searchTimer = null;
+    },
+
+    /// Debounced: the index is searched server-side and a keystroke should not
+    /// be a request.
+    runSearch() {
+      if (this.searchTimer) clearTimeout(this.searchTimer);
+      this.searchTimer = setTimeout(async () => {
+        const q = this.query.trim();
+        if (!q) {
+          this.hits = [];
+          this.searched = false;
+          return;
+        }
+        try {
+          this.hits = await this.getJSON("/api/attune/eq/search?q=" + encodeURIComponent(q));
+          this.error = null;
+        } catch (e) {
+          this.hits = [];
+          this.error = e.message;
+        } finally {
+          this.searched = true;
+        }
+      }, 250);
+    },
+
+    async importFromAutoEq(hit) {
+      this.busy = true;
+      this.error = null;
+      try {
+        await this.getJSON("/api/attune/eq/import-autoeq", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bus: this.importing.name, path: hit.path }),
+        });
+        this.closeImport();
+        await this.load();
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.busy = false;
+      }
     },
 
     async doImport() {
@@ -265,6 +338,20 @@ input, textarea {
   padding: 6px 8px; font-family: inherit; font-size: 12px; width: 100%;
   resize: vertical;
 }
+
+.hits { display: flex; flex-direction: column; gap: 3px;
+        max-height: 190px; overflow-y: auto; }
+.hits::-webkit-scrollbar { width: 5px; }
+.hits::-webkit-scrollbar-thumb { background: #3b413f; border-radius: 3px; }
+.hit { display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+       text-align: left; background: #252927; padding: 6px 9px; }
+.hit:hover:not(:disabled) { background: #313734; }
+.hname { font-size: 12px; color: #fff; }
+.hprov { font-size: 10px; color: #8d9591; }
+
+details { border-top: 1px solid #3b413f; padding-top: 6px; }
+summary { color: #8d9591; font-size: 11px; cursor: pointer; margin-bottom: 5px; }
+details input, details textarea { margin-bottom: 5px; }
 
 .bad { color: #e0655b; font-size: 12px; line-height: 1.45;
        border-left: 3px solid #e0655b; background: #252927;

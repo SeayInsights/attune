@@ -16,6 +16,10 @@ tokio = { workspace = true }
 # Matches the version the daemon already serves with, so one actix is linked.
 actix-web = "4.11"
 
+# Fetching AutoEQ's published measurements. rustls rather than the system TLS
+# stack so the build does not depend on what is installed on the machine.
+reqwest = { workspace = true, features = ["rustls-tls"] }
+
 attune-control = { path = "../attune-control" }
 attune-analysis = { path = "../attune-analysis" }
 attune-tuner = { path = "../attune-tuner" }

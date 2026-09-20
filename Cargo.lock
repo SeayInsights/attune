@@ -657,6 +657,7 @@ dependencies = [
  "attune-eq",
  "attune-tuner",
  "log",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
