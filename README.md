@@ -1,108 +1,80 @@
-[![Support Server](https://img.shields.io/discord/1124010710138106017.svg?label=Discord&logo=Discord&colorB=7289da&style=flat)](https://discord.gg/BRBjkkbvmZ)
-[![GitHub tag (latest SemVer pre-release)](https://img.shields.io/github/v/tag/goxlr-on-linux/goxlr-utility?label=Latest)](http://github.com/goxlr-on-linux/goxlr-utility/releases/latest)
-![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/goxlr-on-linux/goxlr-utility/build.yml)
+# Attune
 
-## GoXLR Configuration Utility
+Measurement-based microphone and headphone tuning for TC-Helicon GoXLR hardware.
 
-An unofficial tool to configure and control a TC-Helicon GoXLR or GoXLR Mini on Linux, MacOS and
-Windows. [Click Here](https://discord.gg/BRBjkkbvmZ) to join our discord!
+> **Status: early development.** The control layer is being built. Nothing here is
+> ready to use yet. Watch the repository rather than downloading it.
 
-## Features
+## What this is
 
-* Full control over the GoXLR and GoXLR Mini (Similar to the official App)
-* Compatibility with profiles created by the official application
-* An accessible UI designed to work well with Assistive Technologies
-* Remote Access. Control your GoXLR from another computer on your network
-* A Sample 'Pre-Buffer'. Record audio from before you press the button
-* Exit Actions, including saving profiles and loading other profiles / lighting
-* Multiple Device Support. Run more than one GoXLR on one PC
-* A CLI and API for basic or advanced scripting and automation
-* Streamdeck Integration (
-  through [The StreamDeck Repository](https://github.com/FrostyCoolSlug/goxlr-utility-streamdeck))
+Attune is a **fork of the [GoXLR Utility](https://github.com/GoXLR-on-Linux/goxlr-utility)**,
+extended from a configuration tool into a tuning system.
 
-## Downloads
+The GoXLR already does the hard part: it splits your audio into separate buses and
+runs your mic through dedicated onboard DSP. What it does not do is tell you *what
+those settings should be*. That is normally decided by ear — and your ears are
+listening through headphones with their own frequency response, which means the
+judgement is made through a distorted instrument and the error is invisible from
+inside it.
 
-Downloads are available on the [Releases Page](https://github.com/GoXLR-on-Linux/goxlr-utility/releases/latest) under
-the
-'Assets' header, we currently provide the following files:
+Attune measures instead.
 
-* `.exe` files, usable on Windows<sup>1</sup>
-* `.pkg` files, usable on MacOS, both Intel and M1 based packages are available<sup>2</sup>
-* `.deb` files, usable on Debian based systems (Ubuntu, Mint, Pop!_OS, etc)
-* `.rpm` files, usable on Redhat based systems (CentOS, Fedora, etc)
+- **Mic tuner.** Records you through the GoXLR, analyses noise floor, dynamics,
+  plosives, sibilance and resonance, derives gate / compressor / EQ / de-esser
+  settings, writes them to the device, and iterates. Blind A/B comparison learns
+  your preference rather than chasing a generic target curve.
+- **Per-bus headphone EQ.** Because the GoXLR exposes Game, Music, Chat and System
+  as separate Windows endpoints, Attune can run a *different* correction curve on
+  each one simultaneously — a competitive profile on Game while Music runs a
+  music-tuned curve. Includes cut-only curve generation for high-impedance
+  headphones, where boosting costs amplifier headroom you may not have.
+- **Per-app routing.** Assigns applications to GoXLR buses automatically.
+- **Profiles.** One switch changes mic settings, EQ curves and routing together.
+- **Bring your own AI.** Attune exposes an MCP server. Point your own model at it
+  if you want conversational tuning. No API keys, no model code and no vendor
+  dependency ship with this software, and everything works with no AI configured.
 
-### OS / Distro Specific Notes
+### What it deliberately does not do
 
-* If you are running Ubuntu 24.04 or a derivitive (such as Linux Mint), please review
-  [this issue](https://github.com/GoXLR-on-Linux/goxlr-utility/issues/221)
-* If you're running the Mix 2 firmware and are seeing UCM errors, please
-  review [this issue](https://github.com/GoXLR-on-Linux/goxlr-utility/issues/223)
-* Arch users can install the `goxlr-utility` package from [AUR](https://aur.archlinux.org/packages/goxlr-utility)
-* Fedora Atomic or Bazzite users please check the instructions
-  [here](https://github.com/GoXLR-on-Linux/goxlr-utility/wiki/Fedora-Atomic-&-Bazzite)
-* Windows users can also aquire the GoXLR Utility via `winget`
+Attune **configures** your mic; it never processes it. The GoXLR's onboard DSP stays
+in the signal path, which is what keeps monitoring at hardware latency. Pulling the
+mic into Windows to process it in software would mean hearing yourself 20–50 ms
+late, and no tuning quality is worth that.
 
-<sup>1</sup> Windows requires the official device drivers provided by TC-Helicon. If you have the official app
-installed you don't need to do anything, otherwise download the latest drivers from 
-[here](https://utility.frostycoolslug.com/update-site/drivers/TC-Helicon_GoXLR_Driver_5.57.zip).
+## Requirements
 
+- A TC-Helicon GoXLR or GoXLR Mini
+- Windows 11
+- The official TC-Helicon USB driver
 
-<sup>2</sup> MacOS support is still somewhat experimental, and the package may conflict with the existing
-GoXLR-MacOS project as they attempt to do the same thing in certain situations.
+Attune does **not** bundle the vendor driver — no redistribution licence has been
+granted for it. If you already have the official GoXLR app installed, you have the
+driver. Otherwise the installer will point you at it.
 
-## Integrations
+## Relationship to upstream
 
-* [twitchat](https://twitchat.fr/) - Activate and change GoXLR settings based on twitch bits / donations (Thanks Durss!)
-* [MacroGraph](https://www.macrograph.app/) - A visual programmer for Streamers. (Thanks JDUDE!)
-* [OBS Fader Sync](https://github.com/parzival-space/obs-goxlr-fader-sync-plugin) - An OBS plugin to sync pre-mix
-  volumes to fader volumes (Thanks parzival!)
-* [Home Assistant](https://github.com/timmo001/homeassistant-integration-goxlr-utility) - A plugin that lets you tie the
-  GoXLR into your home automation (Thanks timmmo!)
+This is a friendly fork, not a competitor. The upstream GoXLR Utility is excellent
+and Attune would not exist without it — it solved the device protocol, the daemon
+architecture and the control surface, all of which Attune inherits.
 
-## Getting Started
+Upstream is in maintenance mode: bug fixes, no new features. Attune adds the
+measurement and tuning layer upstream explicitly chose not to pursue. Additions
+live in separate `attune-*` crates so upstream fixes can continue to be merged in.
 
-Once installed, you can launch the Utility using the `GoXLR Utility` item in your Applications Menu, this will launch
-the utility and configuration UI. The UI will then be accessible via the system tray icon, or (if you don't have a tray)
-by re-running the `GoXLR Utility` menu item.
+If you want a faithful replacement for the official GoXLR app and nothing more,
+**use upstream** — it is mature, stable and well supported, and this is not.
 
-If you're running on Linux, a first configuration step should be to enable `Autostart on Login` via System -> Settings.
-Windows users will get the choice during installation. If you change your mind, you can change the setting.
+## Licence
 
-If you want to import your profiles from the official app, simply click on the folder icon in the top right of the
-relevant profiles pane (either Main or Mic) which will open the directory in your file browser. Copy the profile across
-from the Official App's directory (normally `Documents/GoXLR`) and they'll appear in the util ready to load, simply
-double click them.
-
-If you're setting up from scratch, the best place to start is configuring your microphone. Head over to the `Mic` tab
-and hit `Mic Setup` to configure your microphone type and gain. It may be easier to configure if you first set your
-Gate Amount to 0, then reconfigure it once your mic is working. Once done, go explore the UI!
-
-## The UI
-
-The Utility's UI is web based and served directly from the utility to your web browser of choice (if configured, it
-can also be served to a web browser on another computer). The Utility also provides an 'Application' which wraps the
-web UI into a dedicated app. If you're using the Utility on Windows this option is presented to you during install.
-The UI design was modelled around the official application in an attempt to provide a familiar interface for those
-moving from Windows to other platforms, rather than forcing people to learn a new configuration paradigm.
-
-![image](https://github.com/GoXLR-on-Linux/goxlr-utility/assets/574943/8f14bd2c-e67a-42e5-bd9f-b3cb367e171d)
-
-If you're running on Linux, the 'Application' isn't provided as part of the base utility installation. If you'd
-prefer to use it, check out the [GoXLR UI Repository](https://github.com/frostyCoolSlug/goxlr-utility-ui/), which
-provides various builds for distributions. Once installed, you should be able to go to System -> Utility Settings
-and change the UI Handler there.
-
-## Building
-
-Build instructions and other useful information can be found on the
-project's [wiki](https://github.com/GoXLR-on-Linux/goxlr-utility/wiki/Compilation-Guide).
-While it's a little sparse at the moment, over time it should grow, and requests / feedback are always welcome!
+MIT, inherited from upstream. See [`LICENSE`](LICENSE), [`LICENSE-3RD-PARTY`](LICENSE-3RD-PARTY),
+[`NOTICE`](NOTICE) and [`docs/licensing.md`](docs/licensing.md).
 
 ## Disclaimer
 
-This project is also not supported by, or affiliated in any way with, TC-Helicon. For the official GoXLR software,
-please refer to their website.
+Attune is **not affiliated with, endorsed by, or sponsored by Music Tribe,
+TC-Helicon, or any of their subsidiaries.** "GoXLR" is a trademark of its
+respective owner, used here solely to identify the hardware this software works
+with.
 
-In addition, this project accepts no responsibility or liability for use of this software, or any problems which may
-occur from its use. Please read the [LICENSE](https://github.com/GoXLR-on-Linux/goxlr-utility/blob/main/LICENSE) for
-more information.
+This software is provided with no warranty and no liability for any problems
+arising from its use.

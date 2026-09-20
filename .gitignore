@@ -9,3 +9,6 @@
 
 # Used by CI to make distributables
 /deployment
+
+# Dream Studio project marker -- local authority state, not project source
+.dream-studio-project

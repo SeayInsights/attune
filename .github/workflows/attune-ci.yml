@@ -1,0 +1,44 @@
+# Attune-specific CI.
+#
+# Kept separate from the inherited build.yml on purpose. Upstream's workflow
+# already runs check/fmt/clippy across Linux, macOS and Windows; duplicating it
+# here would only create merge conflicts every time upstream touches it.
+#
+# This workflow covers the two things upstream does not: the actual release
+# build, and the test suite. Windows only, because that is the only platform
+# Attune's routing and EQ layers target.
+
+name: Attune CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build_and_test_windows:
+    name: Build and test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Preparing Cache..
+        uses: actions/cache@v4
+        continue-on-error: false
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-release-
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Test
+        run: cargo test --workspace
