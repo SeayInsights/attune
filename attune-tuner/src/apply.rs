@@ -69,6 +69,18 @@ pub async fn apply(
         );
     }
 
+    // EQ last: it shapes the signal the stages above have already levelled, and
+    // each band is reported separately so a device that declines one band does
+    // not make the other nine look uncertain.
+    for (key, gain) in &rec.eq {
+        let label = format!("EQ {key:?}");
+        record(
+            &mut result,
+            &label,
+            client.set_eq_gain(serial, *key, *gain).await,
+        );
+    }
+
     Ok(result)
 }
 

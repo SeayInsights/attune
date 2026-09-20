@@ -18,7 +18,7 @@
 //! and be worse.
 
 use attune_analysis::Measurement;
-use attune_control::settings::MicChain;
+use attune_control::settings::{EqBandKey, MicChain};
 use goxlr_types::{CompressorRatio, MicrophoneType};
 
 use crate::targets::Target;
@@ -52,6 +52,21 @@ const MAX_GAIN_STEP_DB: f32 = 12.0;
 /// and not the other.
 const MIN_SNR_FOR_GATING_DB: f32 = 15.0;
 
+/// Device limits for one equaliser band, in dB.
+const EQ_MIN_DB: i32 = -9;
+const EQ_MAX_DB: i32 = 9;
+
+/// Largest equaliser move allowed in one pass, per band.
+///
+/// Same reasoning as the gain step, with an extra one: the measurement is taken
+/// *through* the equaliser being adjusted, so each pass changes what the next
+/// one sees. Small steps converge; large ones oscillate.
+const MAX_EQ_STEP_DB: f32 = 3.0;
+
+/// Ignore band errors smaller than this. Below it the correction is inside the
+/// measurement's own noise, and applying it would chase randomness.
+const EQ_DEADBAND_DB: f32 = 1.0;
+
 /// One proposed change.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Change {
@@ -75,6 +90,8 @@ pub struct Recommendation {
     pub gate_threshold_db: Option<i8>,
     pub compressor_threshold_db: Option<i8>,
     pub compressor_ratio: Option<CompressorRatio>,
+    /// Equaliser bands to change, as (band, new gain in dB).
+    pub eq: Vec<(EqBandKey, i8)>,
     /// True when level had to be corrected first and a re-measure is needed
     /// before the remaining stages can be placed.
     pub needs_remeasure: bool,
@@ -121,6 +138,44 @@ fn nearest_ratio(desired: f32) -> CompressorRatio {
         .unwrap_or(CompressorRatio::Ratio2_0)
 }
 
+/// Format a frequency the way a mixer labels it.
+fn format_hz(hz: f32) -> String {
+    if hz >= 1000.0 {
+        format!("{:.0}k", hz / 1000.0)
+    } else {
+        format!("{hz:.0}")
+    }
+}
+
+/// The measured level at an arbitrary frequency.
+///
+/// The measurement's octave bands and the device's equaliser bands do not always
+/// share centres -- a Mini's sit at 90 Hz, 3 kHz and so on. Interpolating in log
+/// frequency lets one measurement serve any band layout, rather than needing a
+/// measurement table per device.
+fn measured_level_at(m: &Measurement, hz: f32) -> f32 {
+    let bands = &m.bands;
+    if bands.is_empty() {
+        return 0.0;
+    }
+    if hz <= bands[0].centre_hz {
+        return bands[0].level_db;
+    }
+    if hz >= bands[bands.len() - 1].centre_hz {
+        return bands[bands.len() - 1].level_db;
+    }
+
+    for pair in bands.windows(2) {
+        let (f0, d0) = (pair[0].centre_hz, pair[0].level_db);
+        let (f1, d1) = (pair[1].centre_hz, pair[1].level_db);
+        if hz >= f0 && hz <= f1 {
+            let t = (hz.ln() - f0.ln()) / (f1.ln() - f0.ln());
+            return d0 + t * (d1 - d0);
+        }
+    }
+    0.0
+}
+
 /// Derive settings for a target from a measurement of the current chain.
 pub fn derive(m: &Measurement, chain: &MicChain, target: Target) -> Recommendation {
     let mut changes = Vec::new();
@@ -130,6 +185,7 @@ pub fn derive(m: &Measurement, chain: &MicChain, target: Target) -> Recommendati
     let mut gate_threshold_db = None;
     let mut compressor_threshold_db = None;
     let mut compressor_ratio = None;
+    let mut eq: Vec<(EqBandKey, i8)> = Vec::new();
 
     let usability = m.usability();
     if usability != attune_analysis::measure::Usability::Usable {
@@ -140,6 +196,7 @@ pub fn derive(m: &Measurement, chain: &MicChain, target: Target) -> Recommendati
             gate_threshold_db,
             compressor_threshold_db,
             compressor_ratio,
+            eq,
             needs_remeasure: true,
             notes,
         };
@@ -235,6 +292,7 @@ pub fn derive(m: &Measurement, chain: &MicChain, target: Target) -> Recommendati
             gate_threshold_db,
             compressor_threshold_db,
             compressor_ratio,
+            eq,
             needs_remeasure: true,
             notes,
         };
@@ -315,6 +373,57 @@ pub fn derive(m: &Measurement, chain: &MicChain, target: Target) -> Recommendati
         compressor_ratio = Some(proposed_ratio);
     }
 
+    // --- Stage 4: equaliser -------------------------------------------------
+    //
+    // The measurement is taken *through* the equaliser, so a band's correction
+    // is relative: new = current + (target - measured). Treating the measured
+    // curve as the raw microphone would double-apply whatever is already set.
+
+    if !m.bands.is_empty() && !chain.eq.is_empty() {
+        let mut moves: Vec<String> = Vec::new();
+
+        for band in &chain.eq {
+            let measured = measured_level_at(m, band.centre_hz);
+            let wanted = target.level_at(band.centre_hz);
+            let error = wanted - measured;
+
+            if error.abs() < EQ_DEADBAND_DB {
+                continue;
+            }
+
+            let step = error.clamp(-MAX_EQ_STEP_DB, MAX_EQ_STEP_DB);
+            let proposed =
+                ((band.gain_db as f32 + step).round() as i32).clamp(EQ_MIN_DB, EQ_MAX_DB) as i8;
+
+            if proposed == band.gain_db {
+                continue;
+            }
+
+            eq.push((band.key, proposed));
+            moves.push(format!(
+                "{} {:+} dB",
+                format_hz(band.centre_hz),
+                proposed - band.gain_db
+            ));
+        }
+
+        if !eq.is_empty() {
+            changes.push(Change {
+                setting: "Microphone EQ",
+                from: format!("{} band(s)", eq.len()),
+                to: moves.join(", "),
+                reason: format!(
+                    "Measured against the '{}' voice curve. Corrections are \
+                     relative to what the equaliser is already doing, because \
+                     the measurement passes through it -- and each band moves \
+                     at most {:.0} dB per pass, since changing the equaliser \
+                     changes what the next measurement sees.",
+                    target.name, MAX_EQ_STEP_DB
+                ),
+            });
+        }
+    }
+
     if m.clipped_fraction > 0.0 {
         notes.push(format!(
             "{:.3}% of samples were clipped. Clipping is distortion that no \
@@ -338,6 +447,7 @@ pub fn derive(m: &Measurement, chain: &MicChain, target: Target) -> Recommendati
         gate_threshold_db,
         compressor_threshold_db,
         compressor_ratio,
+        eq,
         needs_remeasure: false,
         notes,
     }
@@ -359,9 +469,7 @@ mod tests {
             signal_to_noise_db: speech - floor,
             crest_factor_db: peak - speech,
             clipped_fraction: 0.0,
-            low_mid_db: -12.0,
-            presence_db: -20.0,
-            sibilance_db: -26.0,
+            bands: Vec::new(),
             speech_frames: 400,
             total_frames: 750,
         }
@@ -377,7 +485,51 @@ mod tests {
             compressor_threshold_db: -10,
             compressor_ratio: CompressorRatio::Ratio2_0,
             compressor_makeup_db: 0,
+            eq: Vec::new(),
         }
+    }
+
+    /// A chain with a flat ten-band equaliser, for the EQ tests.
+    fn chain_with_flat_eq(gain: u16) -> MicChain {
+        use attune_control::settings::EqBand;
+        use goxlr_types::EqFrequencies::*;
+
+        let bands = [
+            (31.5, Equalizer31Hz),
+            (63.0, Equalizer63Hz),
+            (125.0, Equalizer125Hz),
+            (250.0, Equalizer250Hz),
+            (500.0, Equalizer500Hz),
+            (1000.0, Equalizer1KHz),
+            (2000.0, Equalizer2KHz),
+            (4000.0, Equalizer4KHz),
+            (8000.0, Equalizer8KHz),
+            (16000.0, Equalizer16KHz),
+        ];
+
+        let mut c = chain(gain);
+        c.eq = bands
+            .into_iter()
+            .map(|(hz, key)| EqBand {
+                centre_hz: hz,
+                gain_db: 0,
+                key: EqBandKey::Full(key),
+            })
+            .collect();
+        c
+    }
+
+    /// A measurement whose spectrum is flat across every band.
+    fn flat_spectrum(mut m: Measurement) -> Measurement {
+        use attune_analysis::measure::{BAND_CENTRES_HZ, Band};
+        m.bands = BAND_CENTRES_HZ
+            .iter()
+            .map(|hz| Band {
+                centre_hz: *hz,
+                level_db: 0.0,
+            })
+            .collect();
+        m
     }
 
     #[test]
@@ -573,6 +725,92 @@ mod tests {
         assert_ne!(
             calm_ratio, wild_ratio,
             "ratio should follow measured dynamics"
+        );
+    }
+
+    // --- Equaliser ---------------------------------------------------------
+
+    /// A flat mic against a curve that wants low cut and presence lift should
+    /// get exactly that shape, not a uniform move.
+    #[test]
+    fn a_flat_spectrum_is_shaped_toward_the_target_curve() {
+        let m = flat_spectrum(measurement(-20.0, -70.0, -6.0));
+        let rec = derive(&m, &chain_with_flat_eq(50), STREAMING);
+
+        assert!(!rec.eq.is_empty(), "a flat mic should get EQ corrections");
+
+        let by_key: std::collections::HashMap<_, _> = rec.eq.iter().copied().collect();
+        let low = by_key[&EqBandKey::Full(goxlr_types::EqFrequencies::Equalizer31Hz)];
+        let presence = by_key[&EqBandKey::Full(goxlr_types::EqFrequencies::Equalizer2KHz)];
+
+        assert!(low < 0, "31 Hz should be cut, got {low:+}");
+        assert!(presence > 0, "2 kHz should be lifted, got {presence:+}");
+    }
+
+    /// The safety property, same as gain: one pass cannot make a large move.
+    #[test]
+    fn eq_moves_by_at_most_one_bounded_step_per_band() {
+        let m = flat_spectrum(measurement(-20.0, -70.0, -6.0));
+        let rec = derive(&m, &chain_with_flat_eq(50), STREAMING);
+
+        for (key, gain) in &rec.eq {
+            assert!(
+                (*gain as f32).abs() <= MAX_EQ_STEP_DB,
+                "{key:?} moved to {gain:+} dB from 0 in one pass, cap is {MAX_EQ_STEP_DB}"
+            );
+        }
+    }
+
+    /// EQ is a relative correction, so a chain already matching the curve
+    /// should be left alone rather than re-corrected every pass.
+    #[test]
+    fn a_spectrum_already_on_the_curve_gets_no_eq_change() {
+        let mut m = measurement(-20.0, -70.0, -6.0);
+        use attune_analysis::measure::{BAND_CENTRES_HZ, Band};
+        m.bands = BAND_CENTRES_HZ
+            .iter()
+            .map(|hz| Band {
+                centre_hz: *hz,
+                level_db: STREAMING.level_at(*hz),
+            })
+            .collect();
+
+        let rec = derive(&m, &chain_with_flat_eq(50), STREAMING);
+        assert!(
+            rec.eq.is_empty(),
+            "already on curve, but proposed {:?}",
+            rec.eq
+        );
+    }
+
+    #[test]
+    fn no_eq_is_proposed_while_level_is_still_wrong() {
+        let m = flat_spectrum(measurement(-46.0, -71.0, -32.0));
+        let rec = derive(&m, &chain_with_flat_eq(30), STREAMING);
+        assert!(rec.eq.is_empty(), "level comes first");
+    }
+
+    #[test]
+    fn a_device_reporting_no_equaliser_is_handled() {
+        let m = flat_spectrum(measurement(-20.0, -70.0, -6.0));
+        let rec = derive(&m, &chain(50), STREAMING);
+        assert!(rec.eq.is_empty());
+    }
+
+    /// The target curve must answer for the Mini's centres too, which do not
+    /// match the measurement's octave bands.
+    #[test]
+    fn the_voice_curve_interpolates_to_arbitrary_frequencies() {
+        for hz in [90.0, 3000.0, 6300.0] {
+            let v = STREAMING.level_at(hz);
+            assert!(v.is_finite(), "no value at {hz} Hz");
+            assert!((-20.0..=10.0).contains(&v), "{hz} Hz gave {v} dB");
+        }
+        // Interpolation stays between its anchors.
+        let at_3k = STREAMING.level_at(3000.0);
+        assert!(
+            at_3k <= STREAMING.level_at(2000.0).max(STREAMING.level_at(4000.0)),
+            "3 kHz should sit between its neighbours"
         );
     }
 

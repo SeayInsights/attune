@@ -100,6 +100,9 @@ struct TargetView {
     peak_ceiling_dbfs: f32,
     gate_margin_db: f32,
     compressor_depth_db: f32,
+    /// The voice curve, so the UI can draw the target beside the measurement
+    /// rather than only reporting the gap in words.
+    voice_curve: &'static [(f32, f32)],
 }
 
 #[get("/api/attune/targets")]
@@ -113,6 +116,7 @@ async fn list_targets() -> impl Responder {
             peak_ceiling_dbfs: t.peak_ceiling_dbfs,
             gate_margin_db: t.gate_margin_db,
             compressor_depth_db: t.compressor_depth_db,
+            voice_curve: t.voice_curve,
         })
         .collect();
 

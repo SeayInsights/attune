@@ -34,6 +34,30 @@ const CLIP_THRESHOLD: f32 = 0.999;
 /// "quiet" from "not there".
 const ABSOLUTE_SILENCE_DBFS: f32 = -80.0;
 
+/// Octave band centres, matching the GoXLR's equaliser bands.
+///
+/// The device's own labels are 31.5 Hz through 16 kHz. Measuring on the same
+/// centres means a correction maps onto a band one-to-one, with no interpolation
+/// inventing values between them.
+pub const BAND_CENTRES_HZ: [f32; 10] = [
+    31.5, 63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
+];
+
+/// One octave band of the measured spectrum.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Band {
+    /// Band centre in Hz.
+    pub centre_hz: f32,
+    /// Level relative to this capture's average spectral density, in dB.
+    ///
+    /// **Density, not total energy.** An octave band at 8 kHz is thirty times
+    /// wider than one at 250 Hz, so comparing raw sums across them says more
+    /// about bandwidth than about tone. Dividing by each band's width in Hz is
+    /// what makes these numbers comparable to each other, and it is the whole
+    /// reason this replaced an earlier three-band version that did not.
+    pub level_db: f32,
+}
+
 /// What a capture tells us about the signal.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Measurement {
@@ -57,12 +81,9 @@ pub struct Measurement {
     /// Fraction of samples at or beyond full scale.
     pub clipped_fraction: f32,
 
-    /// Energy 200-400 Hz relative to total speech energy, in dB. Boxiness.
-    pub low_mid_db: f32,
-    /// Energy 2-5 kHz relative to total, in dB. Intelligibility and presence.
-    pub presence_db: f32,
-    /// Energy 5-9 kHz relative to total, in dB. Sibilance.
-    pub sibilance_db: f32,
+    /// The spectrum as octave bands, centred on the frequencies the GoXLR's
+    /// equaliser exposes. Empty when there was not enough speech to measure.
+    pub bands: Vec<Band>,
 
     /// How many frames were classified as speech. Low means a quiet recording,
     /// and every spectral figure above should be distrusted accordingly.
@@ -231,28 +252,7 @@ pub fn measure(samples: &[f32], sample_rate: u32) -> Measurement {
         }
     }
 
-    let bin_hz = sample_rate as f64 / frame_len as f64;
-    let band_energy = |low_hz: f64, high_hz: f64| -> f64 {
-        let low_bin = (low_hz / bin_hz).floor() as usize;
-        let high_bin = ((high_hz / bin_hz).ceil() as usize).min(spectrum_sum.len());
-        if low_bin >= high_bin {
-            return 0.0;
-        }
-        spectrum_sum[low_bin..high_bin].iter().sum()
-    };
-
-    let total: f64 = spectrum_sum.iter().sum();
-    let relative_db = |low: f64, high: f64| -> f32 {
-        if total <= 0.0 {
-            return -100.0;
-        }
-        let ratio = band_energy(low, high) / total;
-        if ratio <= 1e-10 {
-            -100.0
-        } else {
-            (20.0 * ratio.log10()) as f32
-        }
-    };
+    let bands = octave_bands(&spectrum_sum, sample_rate, frame_len);
 
     Measurement {
         duration_secs: samples.len() as f64 / sample_rate as f64,
@@ -263,12 +263,71 @@ pub fn measure(samples: &[f32], sample_rate: u32) -> Measurement {
         signal_to_noise_db: speech_level_dbfs - noise_floor_dbfs,
         crest_factor_db: peak_dbfs - speech_level_dbfs,
         clipped_fraction,
-        low_mid_db: relative_db(200.0, 400.0),
-        presence_db: relative_db(2000.0, 5000.0),
-        sibilance_db: relative_db(5000.0, 9000.0),
+        bands,
         speech_frames,
         total_frames: frame_rms.len(),
     }
+}
+
+/// Reduce a linear magnitude spectrum to octave bands of comparable density.
+///
+/// Returns levels relative to the mean band density, so the result describes the
+/// signal's *tilt* rather than its loudness. That is what a corrective EQ needs:
+/// how the energy is distributed, independent of how much of it there is.
+fn octave_bands(spectrum: &[f64], sample_rate: u32, frame_len: usize) -> Vec<Band> {
+    if spectrum.is_empty() {
+        return Vec::new();
+    }
+
+    let bin_hz = sample_rate as f64 / frame_len as f64;
+    let nyquist = sample_rate as f64 / 2.0;
+
+    // Octave band edges: centre / sqrt(2) to centre * sqrt(2).
+    const HALF_OCTAVE: f64 = std::f64::consts::SQRT_2;
+
+    let mut densities: Vec<(f32, f64)> = Vec::with_capacity(BAND_CENTRES_HZ.len());
+
+    for centre in BAND_CENTRES_HZ {
+        let centre = centre as f64;
+        let low = centre / HALF_OCTAVE;
+        let high = (centre * HALF_OCTAVE).min(nyquist);
+
+        if low >= high {
+            // Band sits above Nyquist for this sample rate. Omitting it is
+            // honest; reporting a level for a band that was not sampled is not.
+            continue;
+        }
+
+        let low_bin = (low / bin_hz).floor() as usize;
+        let high_bin = ((high / bin_hz).ceil() as usize).min(spectrum.len());
+        if low_bin >= high_bin {
+            continue;
+        }
+
+        let energy: f64 = spectrum[low_bin..high_bin].iter().sum();
+        let density = energy / (high - low);
+        densities.push((centre as f32, density));
+    }
+
+    if densities.is_empty() {
+        return Vec::new();
+    }
+
+    // Reference is the mean density across bands, so the curve is centred and a
+    // flat signal reads as flat regardless of overall level.
+    let mean: f64 = densities.iter().map(|(_, d)| *d).sum::<f64>() / densities.len() as f64;
+
+    densities
+        .into_iter()
+        .map(|(centre_hz, density)| Band {
+            centre_hz,
+            level_db: if mean <= 0.0 || density <= 0.0 {
+                -60.0
+            } else {
+                (10.0 * (density / mean).log10()) as f32
+            },
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -298,25 +357,69 @@ mod tests {
         );
     }
 
+    /// The loudest band should be the one the tone actually sits in.
+    fn loudest_band(m: &Measurement) -> f32 {
+        m.bands
+            .iter()
+            .max_by(|a, b| {
+                a.level_db
+                    .partial_cmp(&b.level_db)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|b| b.centre_hz)
+            .unwrap_or(0.0)
+    }
+
     #[test]
-    fn a_three_khz_tone_lands_in_the_presence_band_not_sibilance() {
-        let m = measure(&sine(3000.0, 1.0, 48000, 0.5), 48000);
+    fn a_tone_lands_in_its_own_octave_band() {
+        for centre in [125.0, 500.0, 2000.0, 8000.0] {
+            let m = measure(&sine(centre, 1.0, 48000, 0.5), 48000);
+            assert_eq!(
+                loudest_band(&m),
+                centre,
+                "a {centre} Hz tone should peak in the {centre} Hz band"
+            );
+        }
+    }
+
+    /// The reason the three-band version was replaced: an octave at 8 kHz is
+    /// thirty times wider than one at 250 Hz, so equal *density* must read as
+    /// equal level rather than the wide band winning on width alone.
+    #[test]
+    fn band_levels_are_density_so_width_does_not_decide_them() {
+        // White-ish noise has roughly flat density across the spectrum.
+        let mut seed = 12345u32;
+        let noise: Vec<f32> = (0..48000 * 2)
+            .map(|_| {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                ((seed >> 8) as f32 / 8388608.0) - 1.0
+            })
+            .collect();
+
+        let m = measure(&noise, 48000);
+        let mids: Vec<f32> = m
+            .bands
+            .iter()
+            .filter(|b| b.centre_hz >= 250.0 && b.centre_hz <= 8000.0)
+            .map(|b| b.level_db)
+            .collect();
+
+        let spread = mids.iter().cloned().fold(f32::MIN, f32::max)
+            - mids.iter().cloned().fold(f32::MAX, f32::min);
+
         assert!(
-            m.presence_db > m.sibilance_db,
-            "presence {} should exceed sibilance {}",
-            m.presence_db,
-            m.sibilance_db
+            spread < 6.0,
+            "flat noise should read flat across bands, spread was {spread:.1} dB"
         );
     }
 
     #[test]
-    fn a_seven_khz_tone_lands_in_the_sibilance_band() {
-        let m = measure(&sine(7000.0, 1.0, 48000, 0.5), 48000);
+    fn bands_above_nyquist_are_omitted_not_invented() {
+        // At 16 kHz sample rate, Nyquist is 8 kHz: the 16 kHz band cannot exist.
+        let m = measure(&sine(1000.0, 1.0, 16000, 0.5), 16000);
         assert!(
-            m.sibilance_db > m.presence_db,
-            "sibilance {} should exceed presence {}",
-            m.sibilance_db,
-            m.presence_db
+            !m.bands.iter().any(|b| b.centre_hz == 16000.0),
+            "a band above Nyquist must not be reported"
         );
     }
 

@@ -63,6 +63,18 @@
               <span class="dim">{{ row[0] }}</span><span class="num">{{ row[1] }}</span>
             </div>
 
+            <div class="spectrum" v-if="result.measurement.bands.length">
+              <div class="slabel">Spectrum &mdash; measured vs target</div>
+              <div class="band" v-for="b in result.measurement.bands" :key="b.centre_hz">
+                <span class="bhz">{{ hz(b.centre_hz) }}</span>
+                <span class="btrack">
+                  <i class="bfill" :style="barStyle(b.level_db)"></i>
+                  <i class="btarget" :style="targetStyle(b.centre_hz)"></i>
+                </span>
+                <span class="bdb">{{ b.level_db.toFixed(0) }}</span>
+              </div>
+            </div>
+
             <div class="change" v-for="(c, i) in result.recommendation.changes" :key="i">
               <div class="ct">{{ c.setting }}: {{ c.from }} &rarr; {{ c.to }}</div>
               <div class="cw">{{ c.reason }}</div>
@@ -160,6 +172,43 @@ export default {
         clearInterval(this.timer);
         this.timer = null;
       }
+    },
+
+    hz(v) {
+      return v >= 1000 ? (v / 1000) + "k" : String(v);
+    },
+
+    /// Map a band level to a position on the bar. The range is +/-15 dB, which
+    /// covers a speaking voice's tilt without flattening it into the middle.
+    barPercent(db) {
+      return Math.max(0, Math.min(100, ((db + 15) / 30) * 100));
+    },
+
+    barStyle(db) {
+      return { width: this.barPercent(db) + "%" };
+    },
+
+    /// The target curve drawn as a tick, so the gap the EQ is closing is
+    /// visible rather than only stated in the reason text.
+    targetStyle(hz) {
+      const t = this.targets.find((x) => x.name === this.target);
+      if (!t || !t.voice_curve) return { display: "none" };
+      return { left: this.barPercent(this.curveAt(t.voice_curve, hz)) + "%" };
+    },
+
+    curveAt(curve, hz) {
+      if (!curve.length) return 0;
+      if (hz <= curve[0][0]) return curve[0][1];
+      const last = curve[curve.length - 1];
+      if (hz >= last[0]) return last[1];
+      for (let i = 0; i < curve.length - 1; i++) {
+        const [f0, d0] = curve[i], [f1, d1] = curve[i + 1];
+        if (hz >= f0 && hz <= f1) {
+          const t = (Math.log(hz) - Math.log(f0)) / (Math.log(f1) - Math.log(f0));
+          return d0 + t * (d1 - d0);
+        }
+      }
+      return 0;
     },
 
     shortDevice(d) {
@@ -299,6 +348,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .note { border-left-color: #d9a441; color: #8d9591; font-size: 12px; line-height: 1.45; }
 .ct { font-size: 13px; font-weight: 600; }
 .cw { color: #8d9591; font-size: 12px; margin-top: 3px; line-height: 1.45; }
+
+.spectrum { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; }
+.slabel { color: #8d9591; font-size: 12px; margin-bottom: 2px; }
+.band { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.bhz { color: #8d9591; width: 32px; text-align: right; font-variant-numeric: tabular-nums; }
+.btrack { position: relative; flex: 1; height: 9px; background: #252927; border-radius: 2px; }
+.bfill { position: absolute; left: 0; top: 0; height: 100%; background: #59b1b6;
+         border-radius: 2px; }
+.btarget { position: absolute; top: -2px; width: 2px; height: 13px; background: #d9a441; }
+.bdb { color: #b4bcb8; width: 22px; text-align: right; font-variant-numeric: tabular-nums; }
 
 .good { color: #6fc79b; font-size: 13px; }
 .bad {

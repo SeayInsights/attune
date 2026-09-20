@@ -111,11 +111,23 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    println!("  SPECTRUM  (band energy relative to total)");
+    println!("  SPECTRUM  (octave bands, relative to average density)");
     println!("  --------");
-    println!("  {:<22} {:>7.1} dB", "Low-mid 200-400 Hz", m.low_mid_db);
-    println!("  {:<22} {:>7.1} dB", "Presence 2-5 kHz", m.presence_db);
-    println!("  {:<22} {:>7.1} dB", "Sibilance 5-9 kHz", m.sibilance_db);
+    for band in &m.bands {
+        let label = if band.centre_hz >= 1000.0 {
+            format!("{:.0} kHz", band.centre_hz / 1000.0)
+        } else {
+            format!("{:.0} Hz", band.centre_hz)
+        };
+        // A simple bar, so the tilt is visible without reading numbers.
+        let bar_len = ((band.level_db + 12.0).clamp(0.0, 24.0) * 1.5) as usize;
+        println!(
+            "  {:<10} {:>6.1} dB  {}",
+            label,
+            band.level_db,
+            "#".repeat(bar_len)
+        );
+    }
     println!();
 
     println!("  These are measurements, not recommendations. Deriving gate and");

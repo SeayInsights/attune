@@ -7,7 +7,7 @@
 //! declines must not look like a success.
 
 use goxlr_ipc::{DaemonRequest, GoXLRCommand};
-use goxlr_types::{CompressorRatio, MicrophoneType};
+use goxlr_types::{CompressorRatio, EqFrequencies, MicrophoneType, MiniEqFrequencies};
 
 use crate::ControlError;
 use crate::client::DaemonClient;
@@ -38,6 +38,36 @@ pub struct MicChain {
     pub compressor_ratio: CompressorRatio,
     /// Makeup gain applied after compression, in dB.
     pub compressor_makeup_db: i8,
+
+    /// The mic equaliser, as (centre frequency in Hz, gain in dB), low to high.
+    ///
+    /// The full GoXLR has ten bands and the Mini six, so this is a list rather
+    /// than a fixed array -- code that iterates it works on either without
+    /// asking which device it is talking to.
+    pub eq: Vec<EqBand>,
+}
+
+/// One equaliser band as the device currently has it.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct EqBand {
+    pub centre_hz: f32,
+    pub gain_db: i8,
+    /// Which band this is, on whichever equaliser the device has.
+    ///
+    /// Carried rather than recovered from `centre_hz`, because the frequencies
+    /// are themselves adjustable on the full device -- a band moved off its
+    /// nominal centre would become unidentifiable, and the setter would write to
+    /// the wrong one or refuse.
+    pub key: EqBandKey,
+}
+
+/// Identifies a band on either equaliser, and therefore which command sets it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+pub enum EqBandKey {
+    /// The full GoXLR's ten-band equaliser.
+    Full(EqFrequencies),
+    /// The Mini's six-band equaliser.
+    Mini(MiniEqFrequencies),
 }
 
 impl DaemonClient {
@@ -48,6 +78,43 @@ impl DaemonClient {
 
         let gain_db = mic.mic_gains[mic.mic_type];
 
+        // A Mini reports an empty ten-band map and populates the six-band one.
+        // Reading whichever is present avoids branching on device type here.
+        let mut eq: Vec<EqBand> = if mic.equaliser.gain.is_empty() {
+            mic.equaliser_mini
+                .gain
+                .iter()
+                .map(|(freq, gain)| EqBand {
+                    centre_hz: mic
+                        .equaliser_mini
+                        .frequency
+                        .get(freq)
+                        .copied()
+                        .unwrap_or(0.0),
+                    gain_db: *gain,
+                    key: EqBandKey::Mini(*freq),
+                })
+                .collect()
+        } else {
+            mic.equaliser
+                .gain
+                .iter()
+                .map(|(freq, gain)| EqBand {
+                    centre_hz: mic.equaliser.frequency.get(freq).copied().unwrap_or(0.0),
+                    gain_db: *gain,
+                    key: EqBandKey::Full(*freq),
+                })
+                .collect()
+        };
+
+        // HashMap iteration order is arbitrary; everything downstream assumes
+        // ascending frequency.
+        eq.sort_by(|a, b| {
+            a.centre_hz
+                .partial_cmp(&b.centre_hz)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
         Ok(MicChain {
             mic_type: mic.mic_type,
             gain_db,
@@ -57,6 +124,7 @@ impl DaemonClient {
             compressor_threshold_db: mic.compressor.threshold,
             compressor_ratio: mic.compressor.ratio,
             compressor_makeup_db: mic.compressor.makeup_gain,
+            eq,
         })
     }
 
@@ -131,6 +199,43 @@ impl DaemonClient {
             });
         }
         Ok(())
+    }
+
+    /// Set one equaliser band's gain, then confirm the device took it.
+    pub async fn set_eq_gain(
+        &self,
+        serial: &str,
+        key: EqBandKey,
+        gain_db: i8,
+    ) -> Result<(), ControlError> {
+        let command = match key {
+            EqBandKey::Full(freq) => GoXLRCommand::SetEqGain(freq, gain_db),
+            EqBandKey::Mini(freq) => GoXLRCommand::SetEqMiniGain(freq, gain_db),
+        };
+
+        self.command(serial, command).await?;
+
+        let actual = self
+            .mic_chain(serial)
+            .await?
+            .eq
+            .into_iter()
+            .find(|b| b.key == key)
+            .map(|b| b.gain_db);
+
+        match actual {
+            Some(actual) if actual == gain_db => Ok(()),
+            Some(actual) => Err(ControlError::WriteNotApplied {
+                field: format!("eq[{key:?}]"),
+                requested: gain_db.to_string(),
+                actual: actual.to_string(),
+            }),
+            None => Err(ControlError::WriteNotApplied {
+                field: format!("eq[{key:?}]"),
+                requested: gain_db.to_string(),
+                actual: "band not present on this device".to_string(),
+            }),
+        }
     }
 
     /// Set the compressor ratio, then confirm it.
