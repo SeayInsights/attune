@@ -71,9 +71,11 @@
     -->
     <div class="apo missing" v-if="interference.length">
       Equalizer APO is loading this before Attune, so it colours everything
-      here: <code>{{ interference.join(' · ') }}</code>. Comment those lines out
-      in Equalizer APO&rsquo;s <code>config.txt</code> for measurements that
-      match what you see.
+      here: <code>{{ interference.join(' · ') }}</code>. They can be commented out
+      for measurements that match what you see.
+      <button class="ghost" :disabled="extrasBusy" @click="silenceInterference">
+        Comment them out for me
+      </button>
     </div>
     <div class="bad" v-if="error">{{ error }}</div>
     <div class="note" v-if="status">{{ status }}</div>
@@ -837,6 +839,23 @@ export default {
         this.bypassed = this.extras.bypassed;
       } catch (e) {
         this.extras = null;
+      }
+    },
+
+    async silenceInterference() {
+      this.extrasBusy = true;
+      try {
+        const r = await this.getJSON("/api/attune/extras/silence-interference", {
+          method: "POST",
+        });
+        this.status =
+          `Commented out ${r.commented.length} line(s). The original is kept ` +
+          `beside it as config.txt.attune-backup.`;
+        await this.loadExtras();
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.extrasBusy = false;
       }
     },
 

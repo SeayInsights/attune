@@ -53,6 +53,14 @@ pub async fn apply(
         );
     }
 
+    if let Some(percent) = rec.gate_attenuation {
+        record(
+            &mut result,
+            "Gate attenuation",
+            client.set_gate_attenuation(serial, percent).await,
+        );
+    }
+
     if let Some(threshold) = rec.compressor_threshold_db {
         record(
             &mut result,

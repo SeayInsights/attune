@@ -80,8 +80,20 @@
               <div class="cw">{{ c.reason }}</div>
             </div>
 
-            <div class="good" v-if="result.recommendation.changes.length === 0">
+            <!--
+              "Already matches" is only true when there was nothing wrong. When
+              the level is out of range and no change could be derived -- the
+              preamp pinned at its maximum, say -- saying it matches the target
+              is the opposite of the truth, and hides the notes that explain
+              what to actually do.
+            -->
+            <div class="good"
+                 v-if="result.recommendation.changes.length === 0
+                       && !result.recommendation.needs_remeasure">
               Nothing to change &mdash; already matches this target.
+            </div>
+            <div class="note" v-else-if="result.recommendation.changes.length === 0">
+              Nothing can be applied from this measurement. See below.
             </div>
 
             <div class="note" v-for="(n, i) in result.recommendation.notes" :key="'n' + i">{{ n }}</div>

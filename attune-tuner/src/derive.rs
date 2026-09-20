@@ -88,6 +88,8 @@ pub struct Recommendation {
     /// Concrete values, for the apply path.
     pub gain_db: Option<u16>,
     pub gate_threshold_db: Option<i8>,
+    /// How hard the gate ducks when closed, as a percentage.
+    pub gate_attenuation: Option<u8>,
     pub compressor_threshold_db: Option<i8>,
     pub compressor_ratio: Option<CompressorRatio>,
     /// Equaliser bands to change, as (band, new gain in dB).
@@ -183,6 +185,7 @@ pub fn derive(m: &Measurement, chain: &MicChain, target: Target) -> Recommendati
 
     let mut gain_db = None;
     let mut gate_threshold_db = None;
+    let mut gate_attenuation = None;
     let mut compressor_threshold_db = None;
     let mut compressor_ratio = None;
     let mut eq: Vec<(EqBandKey, i8)> = Vec::new();
@@ -194,6 +197,7 @@ pub fn derive(m: &Measurement, chain: &MicChain, target: Target) -> Recommendati
             changes,
             gain_db,
             gate_threshold_db,
+            gate_attenuation,
             compressor_threshold_db,
             compressor_ratio,
             eq,
@@ -250,21 +254,6 @@ pub fn derive(m: &Measurement, chain: &MicChain, target: Target) -> Recommendati
                 ));
             }
 
-            // Whether the *full* correction is reachable, not just this step.
-            // Bounded stepping means the ceiling is not hit in one pass, so
-            // checking the proposed value would stay silent until several passes
-            // in -- by which point the operator has been told nothing useful.
-            if chain.gain_db as f32 + level_error > GAIN_MAX_DB as f32 {
-                notes.push(format!(
-                    "Even at the device maximum of {GAIN_MAX_DB} dB this signal \
-                     stays below target -- it needs about {:.0} dB and the \
-                     preamp cannot supply it. The rest has to come from physics: \
-                     move closer to the mic, speak up, or check the mic type \
-                     matches how the mic is actually connected.",
-                    chain.gain_db as f32 + level_error
-                ));
-            }
-
             changes.push(Change {
                 setting: "Preamp gain",
                 from: format!("{} dB", chain.gain_db),
@@ -273,23 +262,71 @@ pub fn derive(m: &Measurement, chain: &MicChain, target: Target) -> Recommendati
             });
             gain_db = Some(proposed);
         }
+
+        // Whether the *full* correction is reachable, not just this step.
+        // Bounded stepping means the ceiling is not hit in one pass, so
+        // checking the proposed value would stay silent until several passes
+        // in -- by which point the operator has been told nothing useful.
+        //
+        // Outside the block above on purpose. When the preamp is already at
+        // the maximum, `proposed` equals the current gain, that block does
+        // nothing at all, and this is the only thing with anything to say --
+        // so having it inside meant the one case with no way forward was also
+        // the one case that said nothing. Measured: a 72 dB preamp against a
+        // signal 49 dB below target produced no changes, no explanation, and
+        // a note telling the operator to apply a gain change that did not
+        // exist.
+        if chain.gain_db as f32 + level_error > GAIN_MAX_DB as f32 {
+            let at_ceiling = chain.gain_db as i32 >= GAIN_MAX_DB;
+            let mut note = format!(
+                "Even at the device maximum of {GAIN_MAX_DB} dB this signal \
+                 stays below target -- it needs about {:.0} dB and the preamp \
+                 cannot supply it. The rest has to come from physics: move \
+                 closer to the mic, speak up, or check the mic type matches \
+                 how the mic is actually connected.",
+                chain.gain_db as f32 + level_error
+            );
+
+            if at_ceiling {
+                note.push_str(&format!(
+                    " The preamp is already at {GAIN_MAX_DB} dB, so there is \
+                     nothing here to apply: no amount of re-running will \
+                     change that until the signal itself comes up."
+                ));
+            }
+
+            notes.push(note);
+        }
     }
 
     // --- Stage 2 and 3: only once level is right ---------------------------
 
     if level_off {
-        notes.push(
+        // What comes next depends on whether there is in fact a gain change to
+        // apply. Telling someone to "re-measure after applying the gain
+        // change" when none was produced sends them round a loop that cannot
+        // terminate, and reads as the tool being broken rather than the signal
+        // being unfixable from here.
+        notes.push(if gain_db.is_some() {
             "Gate and compressor are not being set yet. Both are positions \
              relative to the signal's level, so placing them against an \
              out-of-range signal would put them precisely in the wrong spot. \
              Re-measure after applying the gain change and run again."
-                .to_string(),
-        );
+                .to_string()
+        } else {
+            "Gate and compressor are not being set either. Both are positions \
+             relative to the signal's level, and placing them against a signal \
+             this far out would put them precisely in the wrong spot -- they \
+             would have to be moved again the moment the level is fixed. \
+             Nothing will be written until it is."
+                .to_string()
+        });
 
         return Recommendation {
             changes,
             gain_db,
             gate_threshold_db,
+            gate_attenuation,
             compressor_threshold_db,
             compressor_ratio,
             eq,
@@ -324,6 +361,28 @@ pub fn derive(m: &Measurement, chain: &MicChain, target: Target) -> Recommendati
                 ),
             });
             gate_threshold_db = Some(proposed);
+        }
+
+        // A gate that ducks is not a gate. 100% is the only setting that
+        // actually silences the signal between words; anything less leaves the
+        // room audible, and at the preamp gains a dynamic mic needs, clearly
+        // so. Found on real hardware set to 85%, where it reads as the gate
+        // simply not working.
+        if chain.gate_attenuation < 100 {
+            changes.push(Change {
+                setting: "Gate attenuation",
+                from: format!("{}%", chain.gate_attenuation),
+                to: "100%".to_string(),
+                reason: format!(
+                    "The gate is set to duck by {}% rather than mute. Between \
+                     words the room still comes through at {}% of its level, \
+                     which with a preamp this high is plainly audible -- and \
+                     reads as the gate doing nothing rather than as a setting.",
+                    chain.gate_attenuation,
+                    100 - chain.gate_attenuation
+                ),
+            });
+            gate_attenuation = Some(100);
         }
     }
 
@@ -445,6 +504,7 @@ pub fn derive(m: &Measurement, chain: &MicChain, target: Target) -> Recommendati
         changes,
         gain_db,
         gate_threshold_db,
+        gate_attenuation,
         compressor_threshold_db,
         compressor_ratio,
         eq,
@@ -487,6 +547,88 @@ mod tests {
             compressor_makeup_db: 0,
             eq: Vec::new(),
         }
+    }
+
+    /// Regression. A preamp already at the device maximum, against a signal
+    /// still far below target, produced: no changes, no gain, no explanation,
+    /// and a note telling the operator to apply a gain change that was never
+    /// made. Pressing "Measure and apply" therefore did nothing, for ever,
+    /// with nothing on screen saying why.
+    ///
+    /// Found on real hardware -- a 72 dB preamp and speech at -68.9 dBFS.
+    #[test]
+    fn a_preamp_pinned_at_maximum_says_so_instead_of_going_quiet() {
+        let m = measurement(-68.9, -72.9, -58.5);
+        let r = derive(&m, &chain(GAIN_MAX_DB as u16), STREAMING);
+
+        assert!(r.gain_db.is_none(), "there is no gain left to give");
+        assert!(r.is_empty(), "nothing can be applied");
+
+        let notes = r.notes.join(" ");
+        assert!(
+            notes.contains(&GAIN_MAX_DB.to_string()),
+            "the ceiling is never mentioned: {notes}"
+        );
+        assert!(
+            notes.contains("nothing here to apply"),
+            "it does not say that pressing apply will do nothing: {notes}"
+        );
+        // And it must not send someone round a loop that cannot terminate.
+        assert!(
+            !notes.contains("after applying the gain change"),
+            "it still tells the operator to apply a change that does not exist: {notes}"
+        );
+    }
+
+    /// The same signal with headroom left in the preamp must still propose a
+    /// step -- the fix above must not have turned every quiet capture into a
+    /// dead end.
+    #[test]
+    fn a_preamp_below_maximum_still_gets_a_step() {
+        let m = measurement(-68.9, -72.9, -58.5);
+        let r = derive(&m, &chain(40), STREAMING);
+
+        assert_eq!(r.gain_db, Some(52), "expected a bounded 12 dB step");
+        assert!(!r.is_empty());
+
+        // It should still warn that the ceiling will not be enough, because it
+        // will not be: 40 + 48.9 is past 72.
+        let notes = r.notes.join(" ");
+        assert!(notes.contains("device maximum"), "{notes}");
+        assert!(
+            notes.contains("after applying the gain change"),
+            "there IS a change to apply here, so it should say so: {notes}"
+        );
+    }
+
+    /// A gate that ducks is not a gate. Found on real hardware at 85%, where
+    /// the room stayed audible between words and read as the gate simply not
+    /// working -- the one symptom the tuner had no way to address, because
+    /// attenuation was not something it could set at all.
+    #[test]
+    fn a_ducking_gate_is_brought_up_to_a_real_one() {
+        let mut c = chain(40);
+        c.gate_attenuation = 85;
+        // On-target level, so the gate stage is actually reached.
+        let m = measurement(-20.0, -60.0, -9.0);
+
+        let r = derive(&m, &c, STREAMING);
+        assert_eq!(r.gate_attenuation, Some(100));
+        assert!(
+            r.changes.iter().any(|ch| ch.setting == "Gate attenuation"),
+            "the change is not shown to the operator"
+        );
+    }
+
+    /// And a gate already muting is left alone rather than rewritten every run.
+    #[test]
+    fn a_gate_already_muting_is_not_touched() {
+        let mut c = chain(40);
+        c.gate_attenuation = 100;
+        let m = measurement(-20.0, -60.0, -9.0);
+
+        let r = derive(&m, &c, STREAMING);
+        assert_eq!(r.gate_attenuation, None);
     }
 
     /// A chain with a flat ten-band equaliser, for the EQ tests.

@@ -159,6 +159,31 @@ impl DaemonClient {
     }
 
     /// Set the compressor threshold, then confirm it.
+    /// Set how hard the gate ducks when it closes, as a percentage.
+    ///
+    /// 100 is the only value that actually silences the signal. Anything less
+    /// is a duck, and at high preamp gain a duck leaves the room clearly
+    /// audible -- which reads as "the gate is not working" rather than "the
+    /// gate is set to attenuate by 85%".
+    pub async fn set_gate_attenuation(
+        &self,
+        serial: &str,
+        percent: u8,
+    ) -> Result<(), ControlError> {
+        self.command(serial, GoXLRCommand::SetGateAttenuation(percent))
+            .await?;
+
+        let actual = self.mic_chain(serial).await?.gate_attenuation;
+        if actual != percent {
+            return Err(ControlError::WriteNotApplied {
+                field: "gate_attenuation".to_string(),
+                requested: percent.to_string(),
+                actual: actual.to_string(),
+            });
+        }
+        Ok(())
+    }
+
     pub async fn set_compressor_threshold(
         &self,
         serial: &str,

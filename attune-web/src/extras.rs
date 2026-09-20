@@ -29,6 +29,7 @@ pub fn services(cfg: &mut web::ServiceConfig) {
         .service(set_crossfeed)
         .service(set_plugin)
         .service(meters)
+        .service(silence_interference)
         .service(autoswitch_state)
         .service(set_autoswitch);
 }
@@ -197,6 +198,26 @@ fn available_plugins() -> Vec<String> {
         .collect();
     out.sort();
     out
+}
+
+/// Comment out whatever Equalizer APO loads before Attune.
+///
+/// In the app because the alternative is telling someone to open a text file
+/// in Program Files and edit it, which is both worse and the thing this
+/// project exists to stop.
+#[post("/api/attune/extras/silence-interference")]
+async fn silence_interference() -> impl Responder {
+    let Some(install) = apo::detect() else {
+        return error("Equalizer APO is not installed");
+    };
+
+    match apo::silence_interference(&install) {
+        Ok(lines) => HttpResponse::Ok().json(serde_json::json!({
+            "commented": lines,
+            "backup": install.main_config().with_extension("txt.attune-backup"),
+        })),
+        Err(e) => error(&e.to_string()),
+    }
 }
 
 // ----------------------------------------------------------------- meters

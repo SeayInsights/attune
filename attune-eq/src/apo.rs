@@ -466,6 +466,58 @@ pub fn interference(install: &Install) -> Vec<String> {
     found
 }
 
+/// Comment out everything loading before Attune's own include.
+///
+/// The lines are commented rather than deleted, and the original file is kept
+/// alongside as `config.txt.attune-backup`. This is somebody else's
+/// configuration: they may have put that preamp there on purpose, and a tool
+/// that silently deletes what it does not recognise is a tool you cannot trust
+/// with a config directory.
+///
+/// Returns the lines that were commented.
+pub fn silence_interference(install: &Install) -> Result<Vec<String>, ApoError> {
+    let main = install.main_config();
+    let text = std::fs::read_to_string(&main).map_err(|source| ApoError::Write {
+        path: main.clone(),
+        source,
+    })?;
+
+    let offending = interference(install);
+    if offending.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Keep a copy before touching anything. One backup, not a numbered series:
+    // the point is to be able to get back to how it was, and a directory full
+    // of backups is its own mess.
+    let backup = main.with_extension("txt.attune-backup");
+    if !backup.exists() {
+        std::fs::copy(&main, &backup).map_err(|source| ApoError::Write {
+            path: backup.clone(),
+            source,
+        })?;
+    }
+
+    let mut out = String::new();
+    let mut commented = Vec::new();
+    for line in text.lines() {
+        if offending.iter().any(|o| o == line.trim()) && !line.trim_start().starts_with('#') {
+            out.push_str("# Commented out by Attune -- it was changing the sound before\n");
+            out.push_str("# Attune's own settings were applied. Delete these two lines and\n");
+            out.push_str("# uncomment below to put it back.\n# ");
+            out.push_str(line);
+            out.push('\n');
+            commented.push(line.trim().to_string());
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+
+    std::fs::write(&main, out).map_err(|source| ApoError::Write { path: main, source })?;
+    Ok(commented)
+}
+
 /// Whether a `GraphicEQ:` line is all zeroes, which is APO's own default.
 fn is_flat_graphic_eq(line: &str) -> bool {
     let Some(values) = line.split_once(':').map(|(_, v)| v) else {
