@@ -145,6 +145,15 @@ pub(crate) struct BusSettings {
     /// that made them.
     #[serde(default)]
     pub extras: crate::extras::BusExtras,
+    /// How much level to give up so a boosted curve cannot clip.
+    ///
+    /// `None` means work it out -- enough to keep the peak under unity.
+    /// `Some(db)` means the operator has decided, including deciding on zero.
+    /// Boosting without headroom clips, and that is their call to make: it is
+    /// their audio, and a number that moves on its own is not a setting, it is
+    /// something happening to you.
+    #[serde(default)]
+    pub headroom_db: Option<f32>,
 }
 
 fn neutral() -> String {
@@ -159,6 +168,7 @@ impl Default for BusSettings {
             manual: vec![0.0; BAND_CENTRES.len()],
             macros: Macros::default(),
             extras: crate::extras::BusExtras::default(),
+            headroom_db: None,
         }
     }
 }
@@ -266,7 +276,24 @@ fn compose(settings: &BusSettings) -> attune_eq::headroom::Managed {
     let mut composed = profiles::compose(settings.correction.as_ref(), voicing);
     composed.filters.extend(settings.manual_filters());
     composed.filters.extend(settings.macros.filters());
-    attune_eq::headroom::manage(&composed, attune_eq::headroom::DEFAULT_MARGIN_DB)
+
+    match settings.headroom_db {
+        // Automatic: enough to keep the peak under unity.
+        None => attune_eq::headroom::manage(&composed, attune_eq::headroom::DEFAULT_MARGIN_DB),
+        // Chosen. Applied exactly as given, including zero -- which will clip
+        // a boosted curve, and is allowed to, because the person asking for it
+        // can hear the result and this cannot.
+        Some(db) => {
+            let peak = composed.peak_gain_db();
+            let mut curve = composed;
+            curve.preamp_db = db;
+            attune_eq::headroom::Managed {
+                curve,
+                headroom_applied_db: -db,
+                original_peak_db: peak,
+            }
+        }
+    }
 }
 
 fn is_empty(settings: &BusSettings) -> bool {
@@ -325,6 +352,10 @@ struct BusView {
     manual: Vec<f32>,
     macros: Macros,
     headroom_db: f32,
+    /// Whether that figure was worked out or chosen.
+    headroom_auto: bool,
+    /// The largest boost the curve asks for. Headroom smaller than this clips.
+    peak_boost_db: f32,
     /// The composed response as (Hz, dB) for drawing.
     response: Vec<(f32, f32)>,
     /// Crossfeed and the loudness plugin, so the cards can show what is set
@@ -441,6 +472,8 @@ async fn state() -> impl Responder {
                 },
                 macros: settings.macros,
                 headroom_db: managed.headroom_applied_db,
+                headroom_auto: settings.headroom_db.is_none(),
+                peak_boost_db: managed.original_peak_db,
                 response,
                 extras: settings.extras.clone(),
             }
@@ -477,6 +510,16 @@ struct SetRequest {
     /// Broad bass / voice / treble tilt.
     #[serde(default)]
     macros: Option<Macros>,
+    /// Headroom in dB, negative. Ignored when `headroom_auto` is true.
+    ///
+    /// Two fields rather than a nested option: serde maps a JSON `null` onto
+    /// the outer `None` of an `Option<Option<T>>`, so "hand it back to
+    /// automatic" and "leave it alone" are the same value on the wire and the
+    /// control silently does nothing. Which is exactly what it did.
+    #[serde(default)]
+    headroom_db: Option<f32>,
+    #[serde(default)]
+    headroom_auto: Option<bool>,
 }
 
 /// Change one bus. Saves against the active profile; does not write to APO.
@@ -503,6 +546,15 @@ async fn set_bus(req: web::Json<SetRequest>) -> impl Responder {
 
     if let Some(v) = &req.voicing {
         bus.voicing = v.clone();
+    }
+    if req.headroom_auto == Some(true) {
+        bus.headroom_db = None;
+    } else if let Some(db) = req.headroom_db {
+        // Clamped against positive values only: a preamp above zero adds level
+        // the curve did not ask for, which is a different control from this
+        // one. Zero is allowed, and will clip a boosted curve -- deliberately,
+        // because the person choosing it can hear the result and this cannot.
+        bus.headroom_db = Some(db.clamp(-24.0, 0.0));
     }
     if let Some(m) = &req.manual {
         bus.manual = (0..BAND_CENTRES.len())

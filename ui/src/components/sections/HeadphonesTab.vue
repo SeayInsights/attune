@@ -113,8 +113,27 @@
       <div class="card">
         <div class="cardhead">
           <span class="cardtitle">Equaliser</span>
-          <span class="cardnote" v-if="selected.headroom_db > 0.05">
-            &minus;{{ selected.headroom_db.toFixed(1) }} dB headroom applied so it cannot clip
+          <!--
+            Headroom used to be worked out and applied silently. A boosted
+            curve does need it or it clips, but a number that moves on its own
+            is not a setting, it is something happening to you -- and on
+            headphones that need volume it is the difference you hear first.
+            So: shown, adjustable, and it stays where you put it.
+          -->
+          <label class="check hr">
+            <input type="checkbox" :checked="selected.headroom_auto" :disabled="busy"
+                   @change="setHeadroom($event.target.checked ? null : autoHeadroom)"/>
+            Auto headroom
+          </label>
+          <input class="hrslider" type="range" min="-24" max="0" step="0.5"
+                 :value="-selected.headroom_db"
+                 :disabled="busy || selected.headroom_auto"
+                 @input="setHeadroom(parseFloat($event.target.value))"/>
+          <span class="cardnote hrval"
+                :class="{ risky: clipping }">
+            &minus;{{ selected.headroom_db.toFixed(1) }} dB
+            <template v-if="clipping">&mdash; will clip above
+              {{ selected.peak_boost_db.toFixed(1) }} dB</template>
           </span>
           <button class="ghost" @click="resetBands" :disabled="busy">Reset bands</button>
         </div>
@@ -335,6 +354,34 @@
         </div>
       </div>
 
+      <!-- Bring your own AI ------------------------------------------- -->
+      <div class="card">
+        <div class="cardhead">
+          <span class="cardtitle">Connect your AI</span>
+          <span class="cardnote" v-if="mcp && !mcp.server">
+            attune-mcp.exe was not found next to Attune
+          </span>
+        </div>
+
+        <div class="hint">{{ mcp && mcp.guidance }}</div>
+
+        <template v-if="mcp && mcp.config">
+          <pre class="mcpconfig">{{ mcp.config }}</pre>
+          <div class="inline">
+            <button class="ghost" @click="copyMcp">
+              {{ copiedMcp ? 'Copied' : 'Copy configuration' }}
+            </button>
+          </div>
+          <div class="hint">
+            Where it goes:
+            <span v-for="c in mcp.clients" :key="c.name" class="mcpclient">
+              <strong>{{ c.name }}</strong> <code>{{ c.path }}</code>
+            </span>
+          </div>
+          <div class="hint">{{ mcp.safety }}</div>
+        </template>
+      </div>
+
       <!-- Per-game profiles ------------------------------------------- -->
       <div class="card">
         <div class="cardhead">
@@ -465,6 +512,7 @@ export default {
       foreground: null,
       newExe: "",
       levels: {},
+      copiedMcp: false,
       meterTimer: null,
       autoswitchTimer: null,
       spatialAllBuses: true,
@@ -495,6 +543,9 @@ export default {
     },
     // Derived from the limit the daemon reports rather than hard-coded, so the
     // scale still reads correctly if that limit ever changes.
+    mcp() {
+      return (this.extras && this.extras.mcp) || null;
+    },
     interference() {
       return (this.extras && this.extras.interference) || [];
     },
@@ -544,6 +595,18 @@ export default {
     spatialBus() {
       if (!this.spatial || !this.spatial.buses) return null;
       return this.spatial.buses.find((b) => b.name === this.selectedName) || null;
+    },
+    /// What the automatic calculation would choose: enough to keep the peak
+    /// under unity, with the same 1 dB margin the server uses.
+    autoHeadroom() {
+      const peak = (this.selected && this.selected.peak_boost_db) || 0;
+      return peak > 0 ? -(peak + 1) : 0;
+    },
+    /// Chosen headroom smaller than the boost the curve asks for. Allowed --
+    /// it is their audio -- but it should not be a surprise.
+    clipping() {
+      if (!this.selected || this.selected.headroom_auto) return false;
+      return this.selected.peak_boost_db - this.selected.headroom_db > 0.05;
     },
     gainGrid() {
       const l = this.limit;
@@ -757,6 +820,26 @@ export default {
       this.selected.macros[which] = parseFloat(value);
       this.queueSave();
     },
+    async setHeadroom(db) {
+      try {
+        await this.getJSON("/api/attune/eq/set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            db === null
+              ? { bus: this.selectedName, headroom_auto: true }
+              : { bus: this.selectedName, headroom_db: db, headroom_auto: false }
+          ),
+        });
+        // Write it straight through, so the slider is audible while dragging
+        // rather than after a separate Apply.
+        await this.getJSON("/api/attune/eq/apply", { method: "POST" });
+        await this.load();
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+
     resetBands() {
       this.selected.manual = this.selected.manual.map(() => 0);
       this.queueSave(0);
@@ -839,6 +922,18 @@ export default {
         this.bypassed = this.extras.bypassed;
       } catch (e) {
         this.extras = null;
+      }
+    },
+
+    async copyMcp() {
+      try {
+        await navigator.clipboard.writeText(this.mcp.config);
+        this.copiedMcp = true;
+        setTimeout(() => { this.copiedMcp = false; }, 2000);
+      } catch (e) {
+        // Clipboard access can be refused. Selecting the block by hand still
+        // works, so this is not worth an error banner.
+        this.error = "Could not reach the clipboard -- select the text instead.";
       }
     },
 
@@ -1126,6 +1221,10 @@ code { background: #1b1f1e; padding: 1px 5px; border-radius: 3px;
 .cardhead { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .cardnote { color: #8d9591; font-size: 11px; flex: 1; }
 .cardhead .ghost { margin-left: auto; }
+.check.hr { flex: 0 0 auto; }
+.hrslider { width: 150px; accent-color: #59b1b6; flex: 0 0 auto; }
+.hrval { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.hrval.risky { color: #d9a441; }
 
 /* 42px of y-axis labels plus the 8px plotwrap gap, so the region headers line
    up with the plot underneath them rather than with the card edge. */
@@ -1174,6 +1273,11 @@ code { background: #1b1f1e; padding: 1px 5px; border-radius: 3px;
         color: #d9a441; border: 1px solid #5c4a24; border-radius: 8px;
         padding: 1px 6px; }
 .fnote { font-size: 10px; color: #8d9591; line-height: 1.4; }
+
+.mcpconfig { background: #1b1f1e; color: #b4bcb8; padding: 10px 12px; margin: 8px 0;
+             font-family: inherit; font-size: 11px; line-height: 1.5;
+             white-space: pre; overflow-x: auto; border-radius: 3px; }
+.mcpclient { display: block; margin-top: 3px; }
 
 .macro { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
 .macro label { width: 46px; text-transform: capitalize; color: #b4bcb8;

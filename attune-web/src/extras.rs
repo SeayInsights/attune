@@ -327,6 +327,55 @@ async fn set_autoswitch(req: web::Json<AutoswitchRequest>) -> impl Responder {
     }
 }
 
+// ------------------------------------------------------------------- mcp
+
+/// Where the MCP server is, and the configuration to point a model at it.
+///
+/// In the app because the alternative is a README, and a README is a thing
+/// people do not read. The whole point of the MCP server is that somebody can
+/// bring their own model; making them reconstruct a JSON path by hand is a
+/// good way to ensure nobody ever does.
+fn mcp_setup() -> serde_json::Value {
+    let server = std::env::current_exe()
+        .ok()
+        .and_then(|exe| {
+            let candidate = exe.with_file_name("attune-mcp.exe");
+            candidate.is_file().then_some(candidate)
+        })
+        .map(|p| p.to_string_lossy().into_owned());
+
+    // Rendered here rather than in the UI so the path is escaped once, by the
+    // thing that knows it is JSON.
+    let config = server.as_ref().map(|path| {
+        serde_json::json!({
+            "mcpServers": {
+                "attune": { "command": path, "args": [] }
+            }
+        })
+    });
+
+    serde_json::json!({
+        "server": server,
+        "config": config.map(|c| serde_json::to_string_pretty(&c).unwrap_or_default()),
+        "guidance": "Attune ships an MCP server, so a model you already use can \
+                     read your measurements and change settings for you. Paste \
+                     this into your client's MCP configuration and restart it. \
+                     Nothing is sent anywhere by Attune -- the model runs \
+                     wherever you already run it, and talks to the daemon on \
+                     this machine.",
+        "clients": [
+            { "name": "Claude Desktop", "path": "%APPDATA%\\Claude\\claude_desktop_config.json" },
+            { "name": "Claude Code",    "path": "claude mcp add attune -- \"<the path above>\"" },
+            { "name": "Cursor",         "path": "%USERPROFILE%\\.cursor\\mcp.json" }
+        ],
+        // Said plainly: writes are off unless the model is told otherwise, and
+        // that is a property of the server, not of the client's good manners.
+        "safety": "Every tool that changes something defaults to off. A model \
+                   can measure and read freely; applying a change is a separate, \
+                   explicit argument it has to pass."
+    })
+}
+
 // ---------------------------------------------------------------- state
 
 #[get("/api/attune/extras/state")]
@@ -365,6 +414,7 @@ async fn state() -> impl Responder {
                             so by itself.",
         "profiles": profiles,
         "interference": apo::detect().map(|i| apo::interference(&i)).unwrap_or_default(),
+        "mcp": mcp_setup(),
     }))
 }
 
