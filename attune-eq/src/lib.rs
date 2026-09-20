@@ -29,6 +29,7 @@
 pub mod apo;
 pub mod attachment;
 pub mod autoeq;
+pub mod crossfeed;
 pub mod curve;
 pub mod headroom;
 pub mod profiles;
