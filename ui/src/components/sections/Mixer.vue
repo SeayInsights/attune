@@ -37,8 +37,8 @@
               v-show="!submixEnabled() || !submixHide.includes(item)"
       />
     </GroupContainer>
-
-    <AttuneHeadphones />
+    <AttuneHeadphones ref="headphones" />
+    <AttuneProfiles @profile-applied="onProfileApplied" />
   </CenteredContainer>
 </template>
 
@@ -59,10 +59,11 @@ import SubmixSlider from "@/components/slider/SubmixSlider.vue";
 import CenteredContainer from "@/components/containers/CenteredContainer.vue";
 import MixAssignment from "@/components/sections/mixer/MixAssignment.vue";
 import AttuneHeadphones from "@/components/sections/mixer/AttuneHeadphones.vue";
+import AttuneProfiles from "@/components/sections/mixer/AttuneProfiles.vue";
 
 export default {
   name: "MixerTop",
-  components: {AttuneHeadphones, MixAssignment, CenteredContainer, SubmixSlider, GroupContainer, Slider},
+  components: {AttuneProfiles, AttuneHeadphones, MixAssignment, CenteredContainer, SubmixSlider, GroupContainer, Slider},
 
   data() {
     return {
@@ -77,8 +78,11 @@ export default {
       volumes: [],
     }
   },
-
   methods: {
+    onProfileApplied() {
+      this.$refs.headphones?.load();
+    },
+
     getChannelName(channel) {
       return this.$t(`message.channels.${channel}`);
     },

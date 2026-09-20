@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "attune-web"
 description = "Attune's page and HTTP endpoints, mounted into the daemon's existing web server."
 version = { workspace = true }
@@ -24,3 +24,4 @@ attune-control = { path = "../attune-control" }
 attune-analysis = { path = "../attune-analysis" }
 attune-tuner = { path = "../attune-tuner" }
 attune-eq = { path = "../attune-eq" }
+goxlr-ipc = { path = "../ipc" }

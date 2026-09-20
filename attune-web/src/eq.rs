@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Matched by substring against what Windows reports, because the vendor
 /// decorates device names and that decoration changes between driver versions.
-const BUSES: &[&str] = &["Game", "Music", "Chat", "System"];
+pub(crate) const BUSES: &[&str] = &["Game", "Music", "Chat", "System"];
 
 pub fn services(cfg: &mut web::ServiceConfig) {
     cfg.service(state)
@@ -142,7 +142,7 @@ async fn import_autoeq(req: web::Json<AutoEqImport>) -> impl Responder {
 }
 
 /// Where Attune keeps its own settings.
-fn settings_path() -> PathBuf {
+pub(crate) fn settings_path() -> PathBuf {
     let base = std::env::var("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
@@ -155,23 +155,23 @@ fn settings_file() -> PathBuf {
 
 /// What the operator has chosen for each bus.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-struct Settings {
+pub(crate) struct Settings {
     /// Bus name to voicing name.
     #[serde(default)]
-    voicings: std::collections::HashMap<String, String>,
+    pub(crate) voicings: std::collections::HashMap<String, String>,
     /// Bus name to imported headphone correction.
     #[serde(default)]
-    corrections: std::collections::HashMap<String, Curve>,
+    pub(crate) corrections: std::collections::HashMap<String, Curve>,
 }
 
-fn load() -> Settings {
+pub(crate) fn load() -> Settings {
     std::fs::read_to_string(settings_file())
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
 }
 
-fn save(settings: &Settings) -> std::io::Result<()> {
+pub(crate) fn save(settings: &Settings) -> std::io::Result<()> {
     std::fs::create_dir_all(settings_path())?;
     let text = serde_json::to_string_pretty(settings)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -217,13 +217,13 @@ struct EqState {
 }
 
 /// Windows render endpoints, so a bus can be matched to a real device.
-fn render_devices() -> Vec<String> {
+pub(crate) fn render_devices() -> Vec<String> {
     // The daemon already enumerates these for its own purposes, but going
     // through cpal here keeps this module independent of daemon internals.
     attune_analysis::capture::list_output_devices()
 }
 
-fn device_for(bus: &str, devices: &[String]) -> Option<String> {
+pub(crate) fn device_for(bus: &str, devices: &[String]) -> Option<String> {
     devices
         .iter()
         .find(|d| d.to_lowercase().contains(&bus.to_lowercase()))

@@ -656,6 +656,7 @@ dependencies = [
  "attune-control",
  "attune-eq",
  "attune-tuner",
+ "goxlr-ipc",
  "log",
  "reqwest",
  "serde",
