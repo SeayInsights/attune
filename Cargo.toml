@@ -17,6 +17,7 @@ members = [
     # Attune additions. Kept as separate crates so upstream changes stay
     # mergeable -- edits to the crates above should be rare and deliberate.
     "attune-control",
+    "attune-analysis",
 ]
 
 [workspace.package]

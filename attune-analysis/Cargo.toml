@@ -1,0 +1,28 @@
+[package]
+name = "attune-analysis"
+description = "Records the mic through the GoXLR and measures it. Offline analysis only -- nothing here runs in a real-time audio callback."
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+log = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+
+# Capture. Already in the tree via goxlr-audio; pinned to the same version so
+# the workspace resolves one copy.
+cpal = "0.16.0"
+
+# Spectral analysis. Already in the tree.
+rustfft = "6.4.1"
+
+# WAV, so a capture can be kept as evidence and re-analysed later.
+hound = "3.5.1"
+
+[[bin]]
+name = "attune-measure"
+path = "src/bin/attune_measure.rs"
