@@ -20,3 +20,6 @@
 # embeds it at compile time via include_dir), but these are not.
 ui/node_modules/
 ui/dist/
+
+# Built installers.
+/target/installer/
