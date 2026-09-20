@@ -88,6 +88,15 @@
             <span>+12 dB</span><span>+6</span><span>0</span><span>&minus;6</span><span>&minus;12</span>
           </div>
 
+          <div class="plotcol">
+          <!--
+            The viewBox tracks the element's real pixel size rather than being
+            fixed. A fixed viewBox with a different aspect ratio is scaled
+            uniformly and centred by default, which letterboxes the contents
+            into a strip in the middle; forcing preserveAspectRatio="none"
+            would instead stretch the band handles into ellipses. Matching the
+            box means one unit is one pixel and neither happens.
+          -->
           <svg ref="plot" class="plot" :viewBox="`0 0 ${W} ${H}`"
                @pointermove="onDrag" @pointerup="endDrag" @pointerleave="endDrag">
             <!-- grid -->
@@ -113,11 +122,12 @@
               <title>{{ label(hz) }}: {{ selected.manual[i].toFixed(1) }} dB</title>
             </g>
           </svg>
-        </div>
 
-        <div class="xlabels">
-          <span v-for="hz in gridFreqs" :key="'l'+hz"
-                :style="{ left: (xFor(hz) / W * 100) + '%' }">{{ label(hz) }}</span>
+          <div class="xlabels">
+            <span v-for="hz in gridFreqs" :key="'l'+hz"
+                  :style="{ left: (xFor(hz) / W * 100) + '%' }">{{ label(hz) }}</span>
+          </div>
+          </div>
         </div>
 
         <div class="hint plothint">
@@ -199,8 +209,6 @@
 <script>
 import { store } from "@/store";
 
-const W = 1000;
-const H = 340;
 const F_MIN = 20;
 const F_MAX = 20000;
 
@@ -209,7 +217,10 @@ export default {
 
   data() {
     return {
-      W, H,
+      // Measured from the element so the viewBox matches it one to one.
+      W: 1000,
+      H: 200,
+      resizeObserver: null,
       profile: null,
       apo: null,
       buses: [],
@@ -273,11 +284,20 @@ export default {
 
   mounted() {
     this.load();
+    this.measure();
+    // The plot is fluid, so its size changes with the window and when the
+    // sidebar or tab content reflows. Recomputing on resize keeps the viewBox
+    // matched to the box rather than only correct at first paint.
+    if (typeof ResizeObserver !== "undefined" && this.$refs.plot) {
+      this.resizeObserver = new ResizeObserver(() => this.measure());
+      this.resizeObserver.observe(this.$refs.plot);
+    }
   },
 
   beforeUnmount() {
     if (this.searchTimer) clearTimeout(this.searchTimer);
     if (this.saveTimer) clearTimeout(this.saveTimer);
+    if (this.resizeObserver) this.resizeObserver.disconnect();
   },
 
   methods: {
@@ -290,15 +310,27 @@ export default {
 
     // ---- geometry ----
 
+    measure() {
+      const el = this.$refs.plot;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        this.W = Math.round(r.width);
+        this.H = Math.round(r.height);
+      }
+    },
+
     xFor(hz) {
       const lo = Math.log(F_MIN), hi = Math.log(F_MAX);
-      return ((Math.log(hz) - lo) / (hi - lo)) * W;
+      return ((Math.log(hz) - lo) / (hi - lo)) * this.W;
     },
     yForGain(db) {
-      return H / 2 - (Math.max(-this.limit, Math.min(this.limit, db)) / this.limit) * (H / 2 - 12);
+      const half = this.H / 2;
+      return half - (Math.max(-this.limit, Math.min(this.limit, db)) / this.limit) * (half - 10);
     },
     gainForY(y) {
-      return ((H / 2 - y) / (H / 2 - 12)) * this.limit;
+      const half = this.H / 2;
+      return ((half - y) / (half - 10)) * this.limit;
     },
     label(hz) {
       return hz >= 1000 ? hz / 1000 + "k" : String(hz);
@@ -345,7 +377,7 @@ export default {
       if (!svg) return;
       const rect = svg.getBoundingClientRect();
       // The SVG scales to its box, so translate the pointer into viewBox units.
-      const y = ((event.clientY - rect.top) / rect.height) * H;
+      const y = ((event.clientY - rect.top) / rect.height) * this.H;
       const gain = Math.max(-this.limit, Math.min(this.limit, this.gainForY(y)));
       this.selected.manual[this.dragging] = Math.round(gain * 2) / 2;
       this.queueSave();
@@ -565,13 +597,14 @@ export default {
 
 .plotwrap { display: flex; gap: 8px; }
 .ylabels { display: flex; flex-direction: column; justify-content: space-between;
-           color: #6b736f; font-size: 10px; height: 200px; padding: 2px 0;
-           font-variant-numeric: tabular-nums; }
-.plot { flex: 1; height: 200px; background: #252927; touch-action: none; }
+           color: #6b736f; font-size: 10px; height: 220px; padding: 2px 0;
+           font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.plot { display: block; width: 100%; height: 220px; background: #252927; touch-action: none; }
 .handle { cursor: ns-resize; }
 .handle:hover { r: 11; }
 
-.xlabels { position: relative; height: 16px; margin-top: 2px; margin-left: 46px; }
+.plotcol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.xlabels { position: relative; height: 16px; margin-top: 3px; }
 .xlabels span { position: absolute; transform: translateX(-50%);
                 color: #6b736f; font-size: 10px; }
 .plothint { margin-top: 6px; }
