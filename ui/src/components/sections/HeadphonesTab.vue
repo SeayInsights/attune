@@ -169,10 +169,14 @@
             <div class="formats">
               <button v-for="f in spatialBus.formats" :key="f.subtype"
                       class="format"
-                      :class="{ on: f.subtype === spatialBus.active }"
-                      :disabled="spatialBusy"
+                      :class="{ on: f.subtype === spatialBus.active, off: !f.usable }"
+                      :disabled="spatialBusy || !f.usable"
+                      :title="f.usable ? f.note : f.label + ' is not installed. ' + f.note"
                       @click="setSpatial(f)">
-                <span class="fname">{{ f.label }}</span>
+                <span class="fname">
+                  {{ f.label }}
+                  <span class="ftag" v-if="!f.usable">not installed</span>
+                </span>
                 <span class="fnote">{{ f.note }}</span>
               </button>
             </div>
@@ -187,9 +191,11 @@
 
             <div class="hint">
               This is Windows' own virtualiser, switched through the supported
-              API rather than reimplemented. Dolby and DTS appear because
-              Windows knows the names; whether they work depends on whether
-              you have bought them.
+              API rather than reimplemented. Dolby and DTS are listed because
+              Windows knows their names, and greyed out when whatever provides
+              them is not installed &mdash; Windows will accept a change to one
+              of those and then quietly ignore it, so there is nothing to wait
+              for.
             </div>
           </template>
 
@@ -736,7 +742,11 @@ export default {
           border-left: 3px solid transparent; }
 .format:hover:not(:disabled) { background: #343b38; }
 .format.on { border-left-color: #59b1b6; background: #2f3835; }
-.fname { font-size: 12px; }
+.format.off { opacity: .45; cursor: not-allowed; }
+.fname { font-size: 12px; display: flex; align-items: center; gap: 7px; }
+.ftag { font-size: 9px; letter-spacing: .5px; text-transform: uppercase;
+        color: #d9a441; border: 1px solid #5c4a24; border-radius: 8px;
+        padding: 1px 6px; }
 .fnote { font-size: 10px; color: #8d9591; line-height: 1.4; }
 
 .macro { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }

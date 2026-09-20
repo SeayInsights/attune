@@ -18,6 +18,11 @@ serde = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [
     "Foundation",
+    "Foundation_Collections",
+    # Detecting whether Dolby Access / DTS Sound Unbound are installed, so a
+    # format that cannot work is not offered.
+    "ApplicationModel",
+    "Management_Deployment",
     "Media_Audio",
     "Win32_Devices_FunctionDiscovery",
     "Win32_Media_Audio",

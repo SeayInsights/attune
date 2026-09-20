@@ -103,6 +103,9 @@ pub enum SpatialError {
         format: String,
         requirement: String,
     },
+    /// Whatever provides the format is not installed. Knowable before trying,
+    /// so nobody has to wait for it to fail.
+    NotInstalled { format: String, requirement: String },
 }
 
 impl fmt::Display for SpatialError {
@@ -121,6 +124,10 @@ impl fmt::Display for SpatialError {
                  change and then ignored it, which is what it does for a \
                  format it knows about but cannot produce. {requirement}"
             ),
+            Self::NotInstalled {
+                format,
+                requirement,
+            } => write!(f, "{format} is not installed on this machine. {requirement}"),
         }
     }
 }
@@ -146,6 +153,10 @@ pub struct Format {
     /// work: see the module docs. A format can be recognised, accepted and
     /// still not apply, which is why this is not treated as permission.
     pub recognised: bool,
+    /// Whether the machine has what this format needs. This is the one a UI
+    /// should act on -- offering a format that cannot work means a person
+    /// waits to be told no, which is worse than not offering it.
+    pub usable: bool,
 }
 
 /// What is going on with one endpoint.
@@ -160,35 +171,139 @@ pub struct Status {
     pub formats: Vec<Format>,
 }
 
+/// A format Attune can describe, and how to tell whether this machine has what
+/// it needs.
+struct Known {
+    subtype: HSTRING,
+    label: &'static str,
+    note: &'static str,
+    /// A fragment of the provider's Store package family name, matched as a
+    /// substring. `None` means Windows itself provides it.
+    ///
+    /// A substring rather than the exact family name on purpose: getting an
+    /// exact name slightly wrong fails closed and hides a format someone
+    /// actually has, which is a worse outcome than matching loosely.
+    package: Option<&'static str>,
+}
+
 /// The formats Attune knows how to describe, in the order to show them.
 ///
 /// Anything Windows offers that is not in this table still appears, labelled
 /// with its own subtype -- a machine with a renderer nobody here anticipated
 /// should not have it hidden.
-fn known() -> Vec<(HSTRING, &'static str, &'static str)> {
+fn known() -> Vec<Known> {
     let mut out = Vec::new();
-    if let Ok(s) = SpatialAudioFormatSubtype::WindowsSonic() {
-        out.push((
-            s,
-            "Windows Sonic for Headphones",
-            "Free, built into Windows. Turns surround into a headphone mix.",
-        ));
+    if let Ok(subtype) = SpatialAudioFormatSubtype::WindowsSonic() {
+        out.push(Known {
+            subtype,
+            label: "Windows Sonic for Headphones",
+            note: "Free, built into Windows. Turns surround into a headphone mix.",
+            package: None,
+        });
     }
-    if let Ok(s) = SpatialAudioFormatSubtype::DolbyAtmosForHeadphones() {
-        out.push((
-            s,
-            "Dolby Atmos for Headphones",
-            "It needs a paid licence, bought through the Dolby Access app.",
-        ));
+    if let Ok(subtype) = SpatialAudioFormatSubtype::DolbyAtmosForHeadphones() {
+        out.push(Known {
+            subtype,
+            label: "Dolby Atmos for Headphones",
+            note: "It needs a paid licence, bought through the Dolby Access app.",
+            package: Some("DolbyAccess"),
+        });
     }
-    if let Ok(s) = SpatialAudioFormatSubtype::DTSHeadphoneX() {
-        out.push((
-            s,
-            "DTS Headphone:X",
-            "It needs DTS Sound Unbound, or a headset that licenses it.",
-        ));
+    if let Ok(subtype) = SpatialAudioFormatSubtype::DTSHeadphoneX() {
+        out.push(Known {
+            subtype,
+            label: "DTS Headphone:X",
+            note: "It needs DTS Sound Unbound, or a headset that licenses it.",
+            package: Some("SoundUnbound"),
+        });
     }
     out
+}
+
+/// The Store packages installed for the current user, by family name.
+///
+/// Cached briefly rather than for the process lifetime: someone who installs
+/// Dolby Access while Attune is open should see the option come alive without
+/// restarting the app, and someone flicking between buses should not pay for a
+/// full package enumeration every time.
+fn installed_packages() -> Vec<String> {
+    use std::sync::Mutex;
+    use std::time::Instant;
+
+    static CACHE: Mutex<Option<(Instant, Vec<String>)>> = Mutex::new(None);
+    const TTL: Duration = Duration::from_secs(20);
+
+    let mut cache = match CACHE.lock() {
+        Ok(c) => c,
+        // A poisoned lock here means a previous scan panicked. That is not
+        // worth taking the tab down for; treat it as "nothing detected".
+        Err(_) => return Vec::new(),
+    };
+
+    if let Some((at, names)) = cache.as_ref()
+        && at.elapsed() < TTL
+    {
+        return names.clone();
+    }
+
+    let names = scan_packages().unwrap_or_else(|e| {
+        // Enumeration can be refused depending on how the process is running.
+        // That is a reason to stop claiming a format is missing, not a reason
+        // to fail -- see `provider_present`.
+        log::debug!("could not enumerate packages: {e}");
+        Vec::new()
+    });
+
+    *cache = Some((Instant::now(), names.clone()));
+    names
+}
+
+fn scan_packages() -> Result<Vec<String>, SpatialError> {
+    use windows::Management::Deployment::PackageManager;
+
+    let manager = PackageManager::new()?;
+    // An empty security id means the calling user, which is the only one whose
+    // packages matter here and the only one readable without elevation.
+    let packages = manager.FindPackagesByUserSecurityId(&HSTRING::new())?;
+
+    let mut names = Vec::new();
+    for package in packages {
+        if let Ok(id) = package.Id()
+            && let Ok(family) = id.FamilyName()
+        {
+            names.push(family.to_string());
+        }
+    }
+    Ok(names)
+}
+
+/// Whether the machine has what a format needs.
+///
+/// Three ways to say yes, and the order matters:
+///
+///   * Windows provides it, so there is nothing to look for.
+///   * It is already the active format, so whatever provides it plainly
+///     exists. This is what covers a renderer installed by a laptop vendor
+///     rather than from the Store, which no package check would find.
+///   * Its provider's package is installed.
+///
+/// And one way to abstain: if the package list could not be read at all, every
+/// format is reported as present rather than absent. Being unable to check is
+/// not evidence of absence, and greying out something a person has paid for is
+/// worse than letting them press a button that reports why it did not work.
+fn provider_present(entry: &Known, active: &str, installed: &[String]) -> bool {
+    let Some(fragment) = entry.package else {
+        return true;
+    };
+    if entry.subtype.to_string().eq_ignore_ascii_case(active) {
+        return true;
+    }
+    if installed.is_empty() {
+        return true;
+    }
+    installed
+        .iter()
+        .any(|name| name.to_lowercase().contains(&fragment.to_lowercase()))
 }
 
 /// A format's display name and what a machine needs before it will work.
@@ -197,9 +312,9 @@ fn known() -> Vec<(HSTRING, &'static str, &'static str)> {
 /// it stays correct if the identifiers ever change; anything unrecognised gets
 /// a truthful non-answer rather than a guess.
 fn describe(subtype: &str) -> (String, String) {
-    for (candidate, label, note) in known() {
-        if candidate.to_string().eq_ignore_ascii_case(subtype) {
-            return (label.to_string(), note.to_string());
+    for entry in known() {
+        if entry.subtype.to_string().eq_ignore_ascii_case(subtype) {
+            return (entry.label.to_string(), entry.note.to_string());
         }
     }
     (
@@ -292,18 +407,21 @@ pub fn status(bus: &str) -> Result<Status, SpatialError> {
             label: "Off".to_string(),
             note: "Plain stereo. No virtualisation, nothing added to the signal.".to_string(),
             recognised: true,
+            usable: true,
         }];
 
-        for (subtype, label, note) in known() {
-            // Ask rather than assume. A machine without Dolby Access says no
-            // here, and the UI can show the option greyed with its reason
-            // instead of offering something that will fail.
-            let recognised = config.IsSpatialAudioFormatSupported(&subtype).unwrap_or(false);
+        let installed = installed_packages();
+        for entry in known() {
+            let recognised = config
+                .IsSpatialAudioFormatSupported(&entry.subtype)
+                .unwrap_or(false);
+            let usable = recognised && provider_present(&entry, &active, &installed);
             formats.push(Format {
-                subtype: subtype.to_string(),
-                label: label.to_string(),
-                note: note.to_string(),
+                subtype: entry.subtype.to_string(),
+                label: entry.label.to_string(),
+                note: entry.note.to_string(),
                 recognised,
+                usable,
             });
         }
 
@@ -321,6 +439,8 @@ pub fn status(bus: &str) -> Result<Status, SpatialError> {
                     label: active.rsplit('.').next().unwrap_or(&active).to_string(),
                     note: "Registered on this machine by something other than Windows.".to_string(),
                     recognised: true,
+                    // It is the active format, so it demonstrably works.
+                    usable: true,
                 });
             }
         }
@@ -349,7 +469,30 @@ pub fn set(bus: &str, subtype: &str) -> Result<Status, SpatialError> {
         let (device, id) = resolve(&bus_owned)?;
         let config = SpatialAudioDeviceConfiguration::GetForDeviceId(&HSTRING::from(&id))?;
         let wanted = HSTRING::from(&subtype_owned);
+        let current = config.ActiveSpatialAudioFormat()?.to_string();
 
+        // Refuse up front what is knowable up front. Without this, asking for
+        // a format whose provider is not installed spends the full poll
+        // window proving something that could have been answered
+        // immediately -- and a wait that ends in "no" is worse than an
+        // immediate "no".
+        //
+        // This lives here rather than only in the UI because the same call is
+        // reachable from the MCP server and the CLI, and all three should
+        // behave the same way.
+        if !is_off(&subtype_owned) {
+            let installed = installed_packages();
+            if let Some(entry) = known()
+                .into_iter()
+                .find(|e| e.subtype.to_string().eq_ignore_ascii_case(&subtype_owned))
+                && !provider_present(&entry, &current, &installed)
+            {
+                return Err(SpatialError::NotInstalled {
+                    format: entry.label.to_string(),
+                    requirement: entry.note.to_string(),
+                });
+            }
+        }
 
         // Fire the change. The operation's result enum lives in a crate that
         // is an implementation detail of `windows` and has no blocking
@@ -444,6 +587,62 @@ mod tests {
         assert!(requirement.contains("not installed"), "got: {requirement}");
     }
 
+    fn entry(package: Option<&'static str>) -> Known {
+        Known {
+            subtype: HSTRING::from("{11111111-0000-0000-0000-000000000000}"),
+            label: "Test Format",
+            note: "It needs something.",
+            package,
+        }
+    }
+
+    /// Windows provides Sonic, so there is nothing to look for and it is
+    /// always offered.
+    #[test]
+    fn a_format_windows_provides_needs_no_package() {
+        assert!(provider_present(&entry(None), "", &[]));
+        assert!(provider_present(&entry(None), "", &["Something.Else_abc".into()]));
+    }
+
+    /// The case this was built for: no Dolby Access, so do not offer Dolby and
+    /// do not make anyone wait to find that out.
+    #[test]
+    fn a_format_whose_provider_is_absent_is_not_offered() {
+        let installed = vec![
+            "Microsoft.WindowsCalculator_8wekyb3d8bbwe".to_string(),
+            "SomeVendor.SomethingElse_1234".to_string(),
+        ];
+        assert!(!provider_present(&entry(Some("DolbyAccess")), "", &installed));
+    }
+
+    /// Matching is a substring and case-insensitive, because the family name
+    /// carries a publisher hash that is not worth pinning.
+    #[test]
+    fn the_package_match_ignores_the_publisher_hash_and_case() {
+        let installed = vec!["DolbyLaboratories.DolbyAccess_rz1tebttyb220".to_string()];
+        assert!(provider_present(&entry(Some("DolbyAccess")), "", &installed));
+        assert!(provider_present(&entry(Some("dolbyaccess")), "", &installed));
+    }
+
+    /// A renderer installed by a laptop vendor rather than from the Store
+    /// would pass no package check. If Windows already has it switched on,
+    /// that is proof enough.
+    #[test]
+    fn a_format_that_is_already_active_counts_as_present() {
+        let active = "{11111111-0000-0000-0000-000000000000}";
+        assert!(provider_present(&entry(Some("NeverInstalled")), active, &[
+            "Microsoft.WindowsCalculator_8wekyb3d8bbwe".to_string()
+        ]));
+    }
+
+    /// Not being able to read the package list is not evidence of absence.
+    /// Greying out something a person paid for is the worse mistake, so an
+    /// empty list means abstain rather than deny.
+    #[test]
+    fn an_unreadable_package_list_abstains_rather_than_denying() {
+        assert!(provider_present(&entry(Some("DolbyAccess")), "", &[]));
+    }
+
     /// The formats are read from Windows, never written down here. If this
     /// ever fails it means the SDK constants moved, which is exactly the case
     /// hard-coding them would have hidden.
@@ -451,9 +650,17 @@ mod tests {
     fn every_described_format_comes_from_windows() {
         let table = known();
         assert!(!table.is_empty(), "Windows offered no spatial formats at all");
-        for (subtype, label, note) in table {
-            assert!(!subtype.to_string().is_empty(), "{label} has no subtype");
-            assert!(!note.is_empty(), "{label} does not say what it needs");
+        for entry in table {
+            assert!(
+                !entry.subtype.to_string().is_empty(),
+                "{} has no subtype",
+                entry.label
+            );
+            assert!(
+                !entry.note.is_empty(),
+                "{} does not say what it needs",
+                entry.label
+            );
         }
     }
 }
