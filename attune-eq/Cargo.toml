@@ -1,0 +1,14 @@
+[package]
+name = "attune-eq"
+description = "Headphone correction curves for the GoXLR's output buses, applied through Equalizer APO."
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+log = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }

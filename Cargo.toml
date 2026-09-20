@@ -19,6 +19,7 @@ members = [
     "attune-control",
     "attune-analysis",
     "attune-tuner",
+    "attune-eq",
     "attune-web",
 ]
 
