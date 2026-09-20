@@ -32,7 +32,16 @@
       </div>
     </div>
 
-    <div class="apo" :class="{ missing: apo && !apo.installed }" v-if="apo && !apo.included">
+    <!--
+      Shown when APO is missing, when it is installed but not yet loading these
+      curves, and -- the case that matters most -- when it is loading nothing
+      because an endpoint was detached. That last one is invisible otherwise:
+      the curves are still drawn, the settings are still saved, and the audio
+      is flat.
+    -->
+    <div class="apo"
+         :class="{ missing: apo && !apo.installed, wiped: apo && apo.installed && !apo.attached }"
+         v-if="apo && (!apo.included || !apo.attached)">
       {{ apo.guidance }}
     </div>
     <div class="bad" v-if="error">{{ error }}</div>
@@ -774,6 +783,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
               border-left: 3px solid #59b1b6; background: #2d3230;
               padding: 9px 12px; border-radius: 0 3px 3px 0; margin-bottom: 12px; }
 .apo.missing { border-left-color: #d9a441; }
+/* Louder than "missing" on purpose: a detached endpoint means the curves are
+   drawn, saved and doing nothing, which reads as working until you listen. */
+.apo.wiped { border-left-color: #e0655b; color: #e8b3ae; }
 .bad { color: #e0655b; font-size: 12px; line-height: 1.45;
        border-left: 3px solid #e0655b; background: #2d3230;
        padding: 9px 12px; border-radius: 0 3px 3px 0; margin-bottom: 12px; }

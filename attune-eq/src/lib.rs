@@ -1,4 +1,4 @@
-﻿//! Headphone correction for the GoXLR's output buses.
+//! Headphone correction for the GoXLR's output buses.
 //!
 //! # The capability this exists for
 //!
@@ -27,6 +27,7 @@
 //! voicing are different things, and they compose.
 
 pub mod apo;
+pub mod attachment;
 pub mod autoeq;
 pub mod curve;
 pub mod headroom;

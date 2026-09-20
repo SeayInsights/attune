@@ -315,6 +315,11 @@ struct ApoStatus {
     installed: bool,
     included: bool,
     guidance: String,
+    /// Whether APO is still in the audio path everywhere it was set up.
+    /// False means the curves are not running, whatever the rest of this says.
+    attached: bool,
+    /// The endpoints it is no longer attached to, by name.
+    detached: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -362,17 +367,26 @@ async fn state() -> impl Responder {
     let default = BusSettings::default();
 
     let install = apo::detect();
+    let attachment = attune_eq::attachment::check();
     let apo_status = match &install {
         Some(i) => ApoStatus {
             installed: true,
             included: i.is_included(),
-            guidance: if i.is_included() {
+            // A detached endpoint outranks everything else this message could
+            // say. The curves are still on disk, the UI still draws them, and
+            // the audio is flat -- a failure that looks exactly like success,
+            // so it has to be the sentence a person reads first.
+            guidance: if !attachment.healthy() {
+                attachment.explain()
+            } else if i.is_included() {
                 "Equalizer APO is installed and loading these curves.".to_string()
             } else {
                 "Equalizer APO is installed. Pressing Apply adds one line to its \
                  configuration so it loads these curves."
                     .to_string()
             },
+            attached: attachment.healthy(),
+            detached: attachment.detached.clone(),
         },
         None => ApoStatus {
             installed: false,
@@ -383,6 +397,8 @@ async fn state() -> impl Responder {
                        rights, a reboot, and it changes the system audio \
                        pipeline. You can still set curves up here meanwhile."
                 .to_string(),
+            attached: false,
+            detached: Vec::new(),
         },
     };
 
