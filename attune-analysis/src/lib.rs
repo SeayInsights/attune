@@ -21,6 +21,7 @@
 
 pub mod capture;
 pub mod measure;
+pub mod playback;
 
 pub use capture::{Capture, CaptureError};
 pub use measure::Measurement;

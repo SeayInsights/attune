@@ -103,14 +103,8 @@ mod tests {
         );
 
         let config = apo::render(&[
-            apo::BusCurve {
-                device: "Game (TC-HELICON GoXLR)".into(),
-                curve: game.curve,
-            },
-            apo::BusCurve {
-                device: "Music (TC-HELICON GoXLR)".into(),
-                curve: music.curve,
-            },
+            apo::BusCurve::from_composite("Game (TC-HELICON GoXLR)", game.curve),
+            apo::BusCurve::from_composite("Music (TC-HELICON GoXLR)", music.curve),
         ]);
         assert_eq!(config.matches("Device:").count(), 2);
     }

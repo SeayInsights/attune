@@ -1,4 +1,4 @@
-//! Headphone correction endpoints.
+﻿//! Headphone correction endpoints.
 //!
 //! State lives in a JSON file beside the daemon's own configuration rather than
 //! in Equalizer APO's config directory. APO's directory is under Program Files
@@ -22,7 +22,8 @@ pub fn services(cfg: &mut web::ServiceConfig) {
         .service(apply)
         .service(import)
         .service(search)
-        .service(import_autoeq);
+        .service(import_autoeq)
+        .service(verify);
 }
 
 /// AutoEQ's index, fetched once and kept.
@@ -371,10 +372,7 @@ async fn apply(req: web::Json<ApplyRequest>) -> impl Responder {
                 correction,
                 voicing,
             });
-            Some(apo::BusCurve {
-                device,
-                curve: managed.curve,
-            })
+            Some(apo::BusCurve::from_composite(&device, managed.curve))
         })
         .collect();
 
@@ -416,6 +414,79 @@ async fn import(req: web::Json<ImportRequest>) -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({
         "imported": true,
         "filters": filters,
+    }))
+}
+
+#[derive(Deserialize)]
+struct VerifyRequest {
+    /// Which bus to play through.
+    bus: String,
+    /// The capture device carrying the mix back, e.g. "Stream Mix".
+    #[serde(default = "default_return")]
+    return_device: String,
+    #[serde(default = "default_verify_seconds")]
+    seconds: u64,
+}
+
+fn default_return() -> String {
+    "Stream Mix".to_string()
+}
+fn default_verify_seconds() -> u64 {
+    6
+}
+
+/// Play pink noise through a bus and measure what comes back.
+///
+/// This is the only way to know whether Equalizer APO is actually applying a
+/// correction. A `Device:` directive that does not match any endpoint fails
+/// silently -- no error, no log, just no effect -- so reading the configuration
+/// back proves nothing. The GoXLR's Stream Mix bus carries the mixed output as a
+/// capture device, which makes the round trip measurable.
+#[post("/api/attune/eq/verify")]
+async fn verify(req: web::Json<VerifyRequest>) -> impl Responder {
+    let seconds = req.seconds.clamp(3, 20);
+    let bus = req.bus.clone();
+    let return_device = req.return_device.clone();
+
+    let devices = render_devices();
+    let Some(out_device) = device_for(&bus, &devices) else {
+        return error(&format!("no output device matching '{bus}'"));
+    };
+
+    // Play and capture concurrently, both blocking, both off the async workers.
+    let play_device = out_device.clone();
+    let player = tokio::task::spawn_blocking(move || {
+        let samples = attune_analysis::playback::pink_noise(48_000 * seconds as usize, 1);
+        attune_analysis::playback::play(&play_device, &samples, 48_000)
+    });
+
+    // Start the recorder a moment later so it captures steady state rather than
+    // the silence before the stream opens.
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+
+    let capture_seconds = seconds.saturating_sub(2).max(2);
+    let recorder = tokio::task::spawn_blocking(move || {
+        attune_analysis::capture::record(
+            &return_device,
+            std::time::Duration::from_secs(capture_seconds),
+        )
+    });
+
+    let captured = match recorder.await {
+        Ok(Ok(c)) => c,
+        Ok(Err(e)) => return error(&e.to_string()),
+        Err(e) => return error(&format!("capture task failed: {e}")),
+    };
+    let _ = player.await;
+
+    let m = attune_analysis::measure::measure(&captured.samples, captured.sample_rate);
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "bus": bus,
+        "played_to": out_device,
+        "captured_from": captured.device_name,
+        "peak_dbfs": m.peak_dbfs,
+        "bands": m.bands,
     }))
 }
 
