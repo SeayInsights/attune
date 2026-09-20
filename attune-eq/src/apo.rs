@@ -282,8 +282,8 @@ pub fn render_bypassed() -> String {
     out.push_str("\n# Written by Attune. Edits will be overwritten.\n");
     out.push_str("#\n");
     out.push_str("# Attune is bypassed. Nothing here is being applied, so you are\n");
-    out.push_str("# hearing the buses as they come out of the GoXLR. Unbypass in the\n");
-    out.push_str("# Headphones tab to put the corrections back.\n");
+    out.push_str("# hearing the channels as they come out of the GoXLR. Unbypass in\n");
+    out.push_str("# the Headphones tab to put the corrections back.\n");
     out
 }
 

@@ -40,7 +40,7 @@
         -->
         <button class="compare" :class="{ held: bypassed }"
                 :disabled="busy || !apoReady"
-                title="Hold to hear the buses without any of this"
+                title="Hold to hear the channels without any of this"
                 @pointerdown="setBypass(true)" @pointerup="setBypass(false)"
                 @pointerleave="setBypass(false)"
                 @keydown.space.prevent="setBypass(true)"
@@ -223,7 +223,7 @@
 
             <label class="check">
               <input type="checkbox" v-model="spatialAllBuses"/>
-              Set on all four buses &mdash; otherwise the mix changes when you
+              Set on all 4 channels &mdash; otherwise the mix changes when you
               alt-tab
             </label>
 
@@ -298,7 +298,7 @@
 
           <label class="check">
             <input type="checkbox" v-model="extrasAllBuses"/>
-            Set on all four buses
+            Set on all 4 channels
           </label>
           <div class="hint">
             On speakers your left ear hears the right speaker, later and duller,
@@ -363,19 +363,25 @@
         </div>
         <div class="hint" v-else>No rules yet.</div>
 
+        <!--
+          No profile picker here. The rule takes the profile that is loaded
+          right now, because that is how you were choosing it anyway: set the
+          device up the way you want it for this game, then add the rule. The
+          per-rule dropdown above is there to change it afterwards.
+        -->
         <div class="inline addrule">
           <input type="text" v-model="newExe" :placeholder="foreground || 'something.exe'"/>
-          <select v-model="newProfile">
-            <option value="">choose a profile</option>
-            <option v-for="p in profiles" :key="p" :value="p">{{ p }}</option>
-          </select>
-          <button class="ghost" :disabled="extrasBusy || !newProfile" @click="addRule">Add</button>
+          <button class="ghost" :disabled="extrasBusy || !canAddRule" @click="addRule">
+            Add as {{ profile || '…' }}
+          </button>
         </div>
 
         <div class="hint">
-          Matched on the executable name, because window titles change with
-          what is open in them. Nothing reverts when you alt-tab away &mdash;
-          leaving a game should not change how your music sounds.
+          Adding uses the profile loaded now, so set the device up the way you
+          want it and then add the rule. Matched on the executable name,
+          because window titles change with what is open in them. Nothing
+          reverts when you alt-tab away &mdash; leaving a game should not
+          change how your music sounds.
         </div>
       </div>
 
@@ -393,7 +399,7 @@
         <input v-model="query" @input="runSearch" placeholder="e.g. DT 990 Pro"/>
         <label class="check">
           <input type="checkbox" v-model="applyToAll"/>
-          Use on all four buses &mdash; you only wear one pair
+          Use on all 4 channels &mdash; you only wear one pair
         </label>
 
         <div class="hits" v-if="hits.length">
@@ -456,7 +462,6 @@ export default {
       autoswitch: { enabled: false, rules: [] },
       foreground: null,
       newExe: "",
-      newProfile: "",
       levels: {},
       meterTimer: null,
       autoswitchTimer: null,
@@ -511,6 +516,15 @@ export default {
           delay_us: [0, 600],
         }
       );
+    },
+    /// What Add would use: whatever was typed, or failing that whatever is in
+    /// front. The placeholder shows the latter, so an empty box is a choice
+    /// rather than an omission.
+    pendingExe() {
+      return (this.newExe || this.foreground || "").trim();
+    },
+    canAddRule() {
+      return Boolean(this.pendingExe && this.profile);
     },
     busExtras() {
       return (this.selected && this.selected.extras) || { crossfeed: null, plugin: null };
@@ -758,7 +772,7 @@ export default {
       this.status = null;
       try {
         const r = await this.getJSON("/api/attune/eq/apply", { method: "POST" });
-        this.status = `Applied to ${r.buses} bus(es) for the ${r.profile} profile.`;
+        this.status = `Applied to ${r.buses} channel(s) for the ${r.profile} profile.`;
         await this.load();
       } catch (e) {
         this.error = e.message;
@@ -929,11 +943,9 @@ export default {
     },
 
     addRule() {
-      const exe = (this.newExe || this.foreground || "").trim();
-      if (!exe || !this.newProfile) return;
-      this.setAutoswitch({ set: [exe, this.newProfile] });
+      if (!this.canAddRule) return;
+      this.setAutoswitch({ set: [this.pendingExe, this.profile] });
       this.newExe = "";
-      this.newProfile = "";
     },
 
     // ---- spatial audio ----
