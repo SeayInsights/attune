@@ -21,6 +21,14 @@ goxlr-ipc = { path = "../ipc" }
 # mic_type and compressor_ratio come from this crate.
 goxlr-types = { path = "../types", features = ["serde"] }
 
+# Reading which application has focus, for per-game profile switching.
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [[bin]]
 name = "attune-check"
 path = "src/bin/attune_check.rs"

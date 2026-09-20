@@ -258,3 +258,29 @@ impl DaemonClient {
         Ok(())
     }
 }
+
+impl DaemonClient {
+    /// Load a GoXLR profile by name, then confirm the device took it.
+    ///
+    /// The read-back is the same discipline as every other write here: the
+    /// daemon accepting a command is not the same as the device being in the
+    /// state the command asked for, and for profile switching the difference
+    /// would be silent -- the wrong voicing, with nothing to say so.
+    pub async fn load_profile(&self, serial: &str, profile: &str) -> Result<(), ControlError> {
+        self.command(
+            serial,
+            GoXLRCommand::LoadProfile(profile.to_string(), true),
+        )
+        .await?;
+
+        let actual = self.mixer(serial).await?.profile_name;
+        if !actual.eq_ignore_ascii_case(profile) {
+            return Err(ControlError::WriteNotApplied {
+                field: "profile".to_string(),
+                requested: profile.to_string(),
+                actual,
+            });
+        }
+        Ok(())
+    }
+}

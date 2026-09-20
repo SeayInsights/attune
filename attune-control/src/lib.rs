@@ -13,6 +13,7 @@
 //! requested value, so a silent no-op surfaces as an error rather than as a
 //! success the tuner would then learn from.
 
+pub mod autoswitch;
 pub mod client;
 pub mod diagnose;
 pub mod settings;

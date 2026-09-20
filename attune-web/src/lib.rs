@@ -30,6 +30,7 @@ use attune_tuner::{apply, derive, targets};
 use serde::{Deserialize, Serialize};
 
 pub mod eq;
+pub mod extras;
 pub mod spatial;
 
 /// Register Attune's routes.
@@ -39,7 +40,12 @@ pub fn services(cfg: &mut web::ServiceConfig) {
         .service(devices)
         .service(tune)
         .configure(eq::services)
-        .configure(spatial::services);
+        .configure(spatial::services)
+        .configure(extras::services);
+
+    // Per-game profile switching runs whether or not anyone opens the UI,
+    // which is the point of it. It is off until switched on.
+    extras::spawn_autoswitch();
 }
 
 #[derive(Serialize)]

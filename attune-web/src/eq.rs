@@ -140,6 +140,11 @@ pub(crate) struct BusSettings {
     /// Broad bass / voice / treble tilt.
     #[serde(default)]
     pub macros: Macros,
+    /// Crossfeed and the loudness plugin. Per bus and per profile, because
+    /// they are tuning decisions and tuning decisions belong to the profile
+    /// that made them.
+    #[serde(default)]
+    pub extras: crate::extras::BusExtras,
 }
 
 fn neutral() -> String {
@@ -153,6 +158,7 @@ impl Default for BusSettings {
             correction: None,
             manual: vec![0.0; BAND_CENTRES.len()],
             macros: Macros::default(),
+            extras: crate::extras::BusExtras::default(),
         }
     }
 }
@@ -264,7 +270,9 @@ fn compose(settings: &BusSettings) -> attune_eq::headroom::Managed {
 }
 
 fn is_empty(settings: &BusSettings) -> bool {
-    settings.correction.is_none()
+    settings.extras.crossfeed.is_none()
+        && settings.extras.plugin.is_none()
+        && settings.correction.is_none()
         && settings.voicing == "neutral"
         && settings.manual_filters().is_empty()
         && settings.macros.is_flat()
@@ -296,12 +304,23 @@ fn write_config(store: &Store, profile: &str) -> Result<usize, String> {
                 return None;
             }
 
-            Some(apo::BusCurve::from_composite(
-                &device,
-                compose(settings).curve,
-            ))
+            Some(
+                apo::BusCurve::from_composite(&device, compose(settings).curve).with_extras(
+                    apo::Extras {
+                        crossfeed: settings.extras.crossfeed,
+                        plugin: settings.extras.plugin.clone(),
+                    },
+                ),
+            )
         })
         .collect();
+
+    // Writing while bypassed would silently un-bypass, which is the opposite
+    // of what someone holding the compare button asked for. The settings are
+    // still saved; only the file APO reads is left alone.
+    if crate::extras::is_bypassed() {
+        return Ok(buses.len());
+    }
 
     apo::apply(&install, &buses)
         .map(|_| buses.len())
@@ -567,6 +586,40 @@ async fn apply() -> impl Responder {
             .json(serde_json::json!({ "written": true, "buses": count, "profile": profile })),
         Err(e) => error(&e),
     }
+}
+
+/// Re-derive and write the configuration from whatever is currently saved.
+///
+/// Used when coming out of bypass and after any change made through the
+/// extras endpoints. It re-reads the settings rather than restoring a
+/// remembered file, because the settings may have changed in between and the
+/// settings are the truth.
+pub(crate) async fn reapply() -> Result<(), String> {
+    let profile = active_profile().await?;
+    let store = load_store_for(&profile);
+    write_config(&store, &profile).map(|_| ())
+}
+
+/// Change the extras on some buses and write the result out.
+///
+/// Takes the buses by name rather than one at a time so that "apply to all
+/// four" is one save and one config write, not four of each.
+pub(crate) async fn update_extras(
+    buses: &[String],
+    change: impl Fn(&mut crate::extras::BusExtras),
+) -> Result<(), String> {
+    let profile = active_profile().await?;
+    let mut store = load_store_for(&profile);
+
+    {
+        let per_bus = store.profiles.entry(profile.clone()).or_default();
+        for bus in buses {
+            change(&mut per_bus.entry(bus.clone()).or_default().extras);
+        }
+    }
+
+    save_store(&store).map_err(|e| format!("could not save: {e}"))?;
+    write_config(&store, &profile).map(|_| ())
 }
 
 // ---------------------------------------------------------------- AutoEQ
