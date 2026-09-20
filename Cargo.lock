@@ -598,6 +598,7 @@ dependencies = [
  "goxlr-ipc",
  "goxlr-types",
  "log",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.17",

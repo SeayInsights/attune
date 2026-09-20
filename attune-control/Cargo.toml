@@ -14,6 +14,11 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
 
 goxlr-ipc = { path = "../ipc" }
 goxlr-types = { path = "../types" }
+
+[[bin]]
+name = "attune-check"
+path = "src/bin/attune_check.rs"
