@@ -631,6 +631,7 @@ dependencies = [
  "log",
  "serde",
  "thiserror 2.0.17",
+ "windows 0.62.2",
 ]
 
 [[package]]

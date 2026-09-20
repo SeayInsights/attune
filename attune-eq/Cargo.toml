@@ -12,3 +12,19 @@ log = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+
+# Spatial audio is read and set through WinRT (Media_Audio) and the endpoint
+# list comes from Core Audio (Win32_Media_Audio), so both halves are needed.
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Foundation",
+    "Media_Audio",
+    "Win32_Devices_FunctionDiscovery",
+    "Win32_Media_Audio",
+    "Win32_System_Com",
+    # IPropertyStore::GetValue -- the endpoint's friendly name -- is gated on
+    # these two, because it hands back a PROPVARIANT.
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell_PropertiesSystem",
+] }

@@ -31,6 +31,8 @@ pub mod autoeq;
 pub mod curve;
 pub mod headroom;
 pub mod profiles;
+#[cfg(windows)]
+pub mod spatial;
 
 pub use curve::{Curve, Filter, FilterKind};
 pub use profiles::Voicing;

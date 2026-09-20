@@ -30,6 +30,7 @@ use attune_tuner::{apply, derive, targets};
 use serde::{Deserialize, Serialize};
 
 pub mod eq;
+pub mod spatial;
 
 /// Register Attune's routes.
 pub fn services(cfg: &mut web::ServiceConfig) {
@@ -37,7 +38,8 @@ pub fn services(cfg: &mut web::ServiceConfig) {
         .service(list_targets)
         .service(devices)
         .service(tune)
-        .configure(eq::services);
+        .configure(eq::services)
+        .configure(spatial::services);
 }
 
 #[derive(Serialize)]

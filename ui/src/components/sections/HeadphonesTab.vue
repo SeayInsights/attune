@@ -158,14 +158,47 @@
         </div>
 
         <div class="card">
-          <div class="cardhead"><span class="cardtitle">Spatial</span></div>
-          <div class="hint">
-            Windows has spatial audio built in &mdash; Windows Sonic for
-            Headphones is free and turns surround into a headphone mix. Attune
-            does not reimplement it; enable it per device in Windows sound
-            settings and it stacks with everything here.
+          <div class="cardhead">
+            <span class="cardtitle">Spatial</span>
+            <span class="cardnote" v-if="spatialBus">
+              {{ selectedName }} is on {{ spatialBus.active_label }}
+            </span>
           </div>
-          <button class="ghost" @click="openSpatial">Open sound settings</button>
+
+          <template v-if="spatial && spatial.supported && spatialBus">
+            <div class="formats">
+              <button v-for="f in spatialBus.formats" :key="f.subtype"
+                      class="format"
+                      :class="{ on: f.subtype === spatialBus.active }"
+                      :disabled="spatialBusy"
+                      @click="setSpatial(f)">
+                <span class="fname">{{ f.label }}</span>
+                <span class="fnote">{{ f.note }}</span>
+              </button>
+            </div>
+
+            <label class="check">
+              <input type="checkbox" v-model="spatialAllBuses"/>
+              Set on all four buses &mdash; otherwise the mix changes when you
+              alt-tab
+            </label>
+
+            <div class="bad" v-if="spatialError">{{ spatialError }}</div>
+
+            <div class="hint">
+              This is Windows' own virtualiser, switched through the supported
+              API rather than reimplemented. Dolby and DTS appear because
+              Windows knows the names; whether they work depends on whether
+              you have bought them.
+            </div>
+          </template>
+
+          <div class="hint" v-else>
+            {{ spatial && !spatial.supported
+               ? 'Windows spatial audio is a Windows feature.'
+               : 'Reading spatial audio state…' }}
+          </div>
+
           <div class="hint">
             Crossfeed &mdash; softening headphones' unnaturally hard left/right
             split &mdash; is coming next; it is a different thing from surround
@@ -243,6 +276,10 @@ export default {
       query: "",
       hits: [],
       searched: false,
+      spatial: null,
+      spatialAllBuses: true,
+      spatialBusy: false,
+      spatialError: null,
       searchTimer: null,
       saveTimer: null,
       applyToAll: true,
@@ -268,6 +305,12 @@ export default {
     },
     // Derived from the limit the daemon reports rather than hard-coded, so the
     // scale still reads correctly if that limit ever changes.
+    // Spatial state is per endpoint, so it follows the selected bus rather
+    // than being a single setting for the tab.
+    spatialBus() {
+      if (!this.spatial || !this.spatial.buses) return null;
+      return this.spatial.buses.find((b) => b.name === this.selectedName) || null;
+    },
     gainGrid() {
       const l = this.limit;
       return [l, l / 2, 0, -l / 2, -l];
@@ -296,6 +339,7 @@ export default {
 
   mounted() {
     this.load();
+    this.loadSpatial();
   },
 
   beforeUnmount() {
@@ -517,8 +561,42 @@ export default {
       }
     },
 
-    openSpatial() {
-      window.open("ms-settings:sound", "_blank");
+    // ---- spatial audio ----
+
+    async loadSpatial() {
+      try {
+        this.spatial = await this.getJSON("/api/attune/spatial/state");
+      } catch (e) {
+        // Not fatal. The rest of the tab works without it, so this reports
+        // itself in its own card rather than taking over the page.
+        this.spatial = { supported: false, buses: [] };
+        this.spatialError = e.message;
+      }
+    },
+
+    async setSpatial(format) {
+      if (format.subtype === this.spatialBus.active && !this.spatialAllBuses) return;
+      this.spatialBusy = true;
+      this.spatialError = null;
+      try {
+        const r = await this.getJSON("/api/attune/spatial/set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bus: this.selectedName,
+            subtype: format.subtype,
+            all_buses: this.spatialAllBuses,
+          }),
+        });
+        // Partial success is normal -- four endpoints, any of which may be
+        // absent -- so say which ones did not take rather than nothing.
+        if (r.failed && r.failed.length) this.spatialError = r.failed.join(" · ");
+      } catch (e) {
+        this.spatialError = e.message;
+      } finally {
+        await this.loadSpatial();
+        this.spatialBusy = false;
+      }
     },
 
     // ---- headphone picker ----
@@ -651,6 +729,15 @@ export default {
 .xlabels span { position: absolute; transform: translateX(-50%);
                 color: #6b736f; font-size: 10px; }
 .plothint { margin-top: 6px; }
+
+.formats { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+.format { display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+          text-align: left; background: #252927; padding: 8px 11px;
+          border-left: 3px solid transparent; }
+.format:hover:not(:disabled) { background: #343b38; }
+.format.on { border-left-color: #59b1b6; background: #2f3835; }
+.fname { font-size: 12px; }
+.fnote { font-size: 10px; color: #8d9591; line-height: 1.4; }
 
 .macro { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
 .macro label { width: 46px; text-transform: capitalize; color: #b4bcb8;
