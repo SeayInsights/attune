@@ -962,6 +962,7 @@ mod tests {
         let s = BusSettings {
             voicing: "competitive".to_string(),
             extras: Default::default(),
+            headroom_db: None,
             manual,
             correction: Some(Curve {
                 name: "test".into(),
