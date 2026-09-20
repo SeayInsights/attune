@@ -21,10 +21,20 @@
           {{ b.name }}
           <span class="dot" v-if="!isFlat(b)"></span>
           <!-- Live level, read off the bus through Windows loopback. -->
-          <span class="meter" :class="{ clip: meterFor(b.name).clipped }">
+          <!--
+            A meter pinned at the floor is honest and reads as broken. Saying
+            "silent" distinguishes "this is live and there is nothing playing"
+            from "this is not working", which is the whole question someone
+            asks when a bar does not move.
+          -->
+          <span class="meter" :class="{ clip: meterFor(b.name).clipped }"
+                :title="silent(b.name)
+                          ? b.name + ': nothing playing'
+                          : b.name + ': ' + meterFor(b.name).rms_dbfs.toFixed(0) + ' dBFS'">
             <span class="rms" :style="{ width: meterWidth(meterFor(b.name).rms_dbfs) }"></span>
             <span class="peak" :style="{ left: meterWidth(meterFor(b.name).peak_dbfs) }"></span>
           </span>
+          <span class="silent" v-if="silent(b.name)">silent</span>
         </button>
       </div>
 
@@ -47,6 +57,12 @@
                 @keyup.space.prevent="setBypass(false)">
           {{ bypassed ? 'Bypassed' : 'Hold to compare' }}
         </button>
+        <!--
+          Connecting a model is set-up, not tuning, so it does not belong among
+          the controls you reach for while listening. Behind a button, out of
+          the way, still one click from anywhere in the tab.
+        -->
+        <button class="ghost" @click="showMcp = true">Connect AI</button>
         <button @click="verify" :disabled="busy || !apoReady">Test</button>
         <button class="accent" @click="applyAll" :disabled="busy || !apoReady">Apply</button>
       </div>
@@ -354,34 +370,6 @@
         </div>
       </div>
 
-      <!-- Bring your own AI ------------------------------------------- -->
-      <div class="card">
-        <div class="cardhead">
-          <span class="cardtitle">Connect your AI</span>
-          <span class="cardnote" v-if="mcp && !mcp.server">
-            attune-mcp.exe was not found next to Attune
-          </span>
-        </div>
-
-        <div class="hint">{{ mcp && mcp.guidance }}</div>
-
-        <template v-if="mcp && mcp.config">
-          <pre class="mcpconfig">{{ mcp.config }}</pre>
-          <div class="inline">
-            <button class="ghost" @click="copyMcp">
-              {{ copiedMcp ? 'Copied' : 'Copy configuration' }}
-            </button>
-          </div>
-          <div class="hint">
-            Where it goes:
-            <span v-for="c in mcp.clients" :key="c.name" class="mcpclient">
-              <strong>{{ c.name }}</strong> <code>{{ c.path }}</code>
-            </span>
-          </div>
-          <div class="hint">{{ mcp.safety }}</div>
-        </template>
-      </div>
-
       <!-- Per-game profiles ------------------------------------------- -->
       <div class="card">
         <div class="cardhead">
@@ -435,6 +423,33 @@
       </div>
 
     </template>
+
+    <!-- Connect your AI ------------------------------------------------- -->
+    <div class="modal" v-if="showMcp" @click.self="showMcp = false">
+      <div class="sheet">
+        <div class="stitle">Connect your AI</div>
+        <div class="hint">{{ mcp && mcp.guidance }}</div>
+
+        <template v-if="mcp && mcp.config">
+          <pre class="mcpconfig">{{ mcp.config }}</pre>
+          <button class="ghost" @click="copyMcp">
+            {{ copiedMcp ? 'Copied' : 'Copy configuration' }}
+          </button>
+          <div class="hint">
+            Where it goes:
+            <span v-for="c in mcp.clients" :key="c.name" class="mcpclient">
+              <strong>{{ c.name }}</strong> <code>{{ c.path }}</code>
+            </span>
+          </div>
+          <div class="hint">{{ mcp.safety }}</div>
+        </template>
+        <div class="hint" v-else>
+          attune-mcp.exe was not found next to Attune.
+        </div>
+
+        <button @click="showMcp = false">Close</button>
+      </div>
+    </div>
 
     <!-- Headphone picker ------------------------------------------------ -->
     <div class="modal" v-if="searching" @click.self="searching = false">
@@ -513,6 +528,7 @@ export default {
       newExe: "",
       levels: {},
       copiedMcp: false,
+      showMcp: false,
       meterTimer: null,
       autoswitchTimer: null,
       spatialAllBuses: true,
@@ -892,6 +908,12 @@ export default {
 
     // ---- meters ----
 
+    /// Nothing is reaching this channel. Distinct from the meter not working:
+    /// Windows loopback delivers no callbacks at all on an idle endpoint, so
+    /// the floor is what a live, silent channel looks like.
+    silent(bus) {
+      return this.meterFor(bus).rms_dbfs <= -89.5;
+    },
     meterFor(bus) {
       return this.levels[bus] || { rms_dbfs: -90, peak_dbfs: -90, clipped: false };
     },
@@ -1189,6 +1211,9 @@ export default {
 .meter .peak { position: absolute; top: 0; bottom: 0; width: 2px;
                background: #b4bcb8; transition: left .08s linear; }
 .meter.clip { background: #e0655b; }
+.silent { position: absolute; bottom: -1px; left: 0; right: 0; text-align: center;
+          font-size: 8px; letter-spacing: .5px; color: #4a524e;
+          text-transform: uppercase; pointer-events: none; }
 .meter.clip .rms { background: #e0655b; }
 
 .rules { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
