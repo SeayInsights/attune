@@ -3,7 +3,7 @@
 ; Kept alongside upstream's goxlr-utility.iss rather than replacing it, so a
 ; merge from upstream touches their file and not this one.
 ;
-; Two deliberate differences from upstream's script:
+; Three deliberate differences from upstream's script:
 ;
 ;   1. The driver check looks in several places and does not abort. Upstream
 ;      checks exactly one path, W10_x64, and refuses to install if it is not
@@ -13,10 +13,17 @@
 ;
 ;   2. It never bundles the TC-Helicon driver. No redistribution licence has been
 ;      granted for it, so the installer points at the vendor download instead.
+;
+;   3. It looks for Equalizer APO too, and says what will and will not work
+;      without it. Attune's headphone side is written entirely through APO, so
+;      installing Attune alone gets you the mixer and the microphone and none of
+;      the correction -- which would otherwise look like the feature is broken
+;      rather than absent.
 
 #define AppName "Attune"
-#define AppVersion "0.1.0"
+#define AppVersion "0.2.0"
 #define DriverUrl "https://utility.frostycoolslug.com/update-site/drivers/"
+#define ApoUrl "https://sourceforge.net/projects/equalizerapo/"
 
 [Setup]
 AppName={#AppName}
@@ -53,9 +60,18 @@ Source: "..\target\release\goxlr-daemon.exe";   DestDir: "{app}"
 Source: "..\target\release\goxlr-client.exe";   DestDir: "{app}"
 Source: "..\target\release\goxlr-defaults.exe"; DestDir: "{app}"
 Source: "..\target\release\goxlr-launcher.exe"; DestDir: "{app}"
+
 ; The MCP server. Optional at runtime -- Attune works with no AI configured --
 ; but shipped so that pointing a model at it needs no separate download.
 Source: "..\target\release\attune-mcp.exe";     DestDir: "{app}"
+
+; Diagnostics. Shipped because it has no equivalent in the UI: when the daemon
+; will not talk to the device there is by definition no window to look at.
+;
+; attune-measure and attune-tune are deliberately NOT shipped. Everything they
+; do is in the Headphones and Mic Setup tabs now, and a second way in is a
+; second thing to keep in step with the first.
+Source: "..\target\release\attune-check.exe";   DestDir: "{app}"
 
 Source: "..\LICENSE";                           DestDir: "{app}"
 Source: "..\LICENSE-3RD-PARTY";                 DestDir: "{app}"; Flags: isreadme
@@ -78,6 +94,7 @@ Filename: "{app}\goxlr-launcher.exe"; Description: "Start Attune"; \
 [Code]
 var
   DriverMissing: Boolean;
+  ApoMissing: Boolean;
 
 // The driver has moved between versions, so check the places it is known to
 // live rather than asserting one.
@@ -102,9 +119,20 @@ begin
   end;
 end;
 
+// Equalizer APO's config directory is what matters -- an installation root
+// without one is a partial install, and Attune would fail later rather than
+// here. This is the same test the application itself makes, deliberately, so
+// the installer and the app cannot disagree about whether APO is usable.
+function ApoPresent(): Boolean;
+begin
+  Result := DirExists(ExpandConstant('{commonpf}\EqualizerAPO\config')) or
+            DirExists(ExpandConstant('{commonpf32}\EqualizerAPO\config'));
+end;
+
 function InitializeSetup(): Boolean;
 begin
   DriverMissing := not DriverPresent();
+  ApoMissing := not ApoPresent();
 
   if DriverMissing then
   begin
@@ -132,7 +160,10 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   ErrorCode: Integer;
 begin
-  if (CurStep = ssPostInstall) and DriverMissing then
+  if CurStep <> ssPostInstall then
+    Exit;
+
+  if DriverMissing then
   begin
     if MsgBox(
       'Open the driver download page now?' + #13#10#13#10 +
@@ -140,6 +171,30 @@ begin
       mbConfirmation, MB_YESNO) = IDYES then
     begin
       ShellExecAsOriginalUser('open', '{#DriverUrl}', '', '', SW_SHOW, ewNoWait, ErrorCode);
+    end;
+  end;
+
+  // Said plainly, and after the install rather than as a gate: Attune is
+  // genuinely useful without APO -- the mixer, the microphone chain, the
+  // measurement and the tuner all work -- but every headphone correction is
+  // written through APO and simply will not exist without it.
+  if ApoMissing then
+  begin
+    if MsgBox(
+      'Equalizer APO was not found.' + #13#10#13#10 +
+      'Attune works without it: the mixer, the microphone chain and the ' +
+      'measurement tools are all unaffected.' + #13#10#13#10 +
+      'What will not work is the Headphones tab. Every headphone correction, ' +
+      'the crossfeed and the loudness plugin are applied through Equalizer APO ' +
+      'rather than by Attune itself, which is why they add no latency to your ' +
+      'game audio. Without it those settings can be chosen and saved, and ' +
+      'nothing will reach your headphones.' + #13#10#13#10 +
+      'It is free and open source. Installing it needs administrator rights ' +
+      'and a reboot, so Attune does not do it for you.' + #13#10#13#10 +
+      'Open the Equalizer APO download page now?',
+      mbConfirmation, MB_YESNO) = IDYES then
+    begin
+      ShellExecAsOriginalUser('open', '{#ApoUrl}', '', '', SW_SHOW, ewNoWait, ErrorCode);
     end;
   end;
 end;
