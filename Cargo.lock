@@ -634,6 +634,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "attune-mcp"
+version = "1.2.4"
+dependencies = [
+ "anyhow",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "attune-tuner"
 version = "1.2.4"
 dependencies = [
