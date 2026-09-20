@@ -287,33 +287,8 @@ fn write_config(store: &Store, profile: &str) -> Result<usize, String> {
         );
     };
 
-    let devices = render_devices();
-    let default = BusSettings::default();
-    let empty = HashMap::new();
-    let per_bus = store.profiles.get(profile).unwrap_or(&empty);
+    let buses = bus_curves(store, profile);
 
-    let buses: Vec<apo::BusCurve> = BUSES
-        .iter()
-        .filter_map(|name| {
-            let device = device_for(name, &devices)?;
-            let settings = per_bus.get(*name).unwrap_or(&default);
-
-            // A bus with nothing set contributes nothing; an empty Device
-            // section would only add noise to the file.
-            if is_empty(settings) {
-                return None;
-            }
-
-            Some(
-                apo::BusCurve::from_composite(&device, compose(settings).curve).with_extras(
-                    apo::Extras {
-                        crossfeed: settings.extras.crossfeed,
-                        plugin: settings.extras.plugin.clone(),
-                    },
-                ),
-            )
-        })
-        .collect();
 
     // Writing while bypassed would silently un-bypass, which is the opposite
     // of what someone holding the compare button asked for. The settings are
@@ -590,6 +565,48 @@ async fn apply() -> impl Responder {
             .json(serde_json::json!({ "written": true, "buses": count, "profile": profile })),
         Err(e) => error(&e),
     }
+}
+
+/// The APO buses a profile's settings produce.
+fn bus_curves(store: &Store, profile: &str) -> Vec<apo::BusCurve> {
+    let devices = render_devices();
+    let default = BusSettings::default();
+    let empty = HashMap::new();
+    let per_bus = store.profiles.get(profile).unwrap_or(&empty);
+
+    BUSES
+        .iter()
+        .filter_map(|name| {
+            let device = device_for(name, &devices)?;
+            let settings = per_bus.get(*name).unwrap_or(&default);
+
+            // A bus with nothing set contributes nothing; an empty Device
+            // section would only add noise to the file.
+            if is_empty(settings) {
+                return None;
+            }
+
+            Some(
+                apo::BusCurve::from_composite(&device, compose(settings).curve).with_extras(
+                    apo::Extras {
+                        crossfeed: settings.extras.crossfeed,
+                        plugin: settings.extras.plugin.clone(),
+                    },
+                ),
+            )
+        })
+        .collect()
+}
+
+/// Write the bypassed configuration: nothing applied at all.
+pub(crate) async fn bypass() -> Result<(), String> {
+    let Some(install) = apo::detect() else {
+        return Err("Equalizer APO is not installed".to_string());
+    };
+
+    apo::apply_bypassed(&install)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Re-derive and write the configuration from whatever is currently saved.

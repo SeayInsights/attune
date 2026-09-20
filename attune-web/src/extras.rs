@@ -64,17 +64,18 @@ struct BypassRequest {
 
 #[post("/api/attune/extras/bypass")]
 async fn set_bypass(req: web::Json<BypassRequest>) -> impl Responder {
-    let Some(install) = apo::detect() else {
+    if apo::detect().is_none() {
         return error("Equalizer APO is not installed, so there is nothing to bypass");
-    };
+    }
 
     if req.on {
-        match apo::apply_bypassed(&install) {
-            Ok(_) => {
-                set_bypassed(true);
-                HttpResponse::Ok().json(serde_json::json!({ "bypassed": true }))
+        set_bypassed(true);
+        match crate::eq::bypass().await {
+            Ok(()) => HttpResponse::Ok().json(serde_json::json!({ "bypassed": true })),
+            Err(e) => {
+                set_bypassed(false);
+                error(&e)
             }
-            Err(e) => error(&e.to_string()),
         }
     } else {
         set_bypassed(false);

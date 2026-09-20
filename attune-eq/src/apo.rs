@@ -276,14 +276,21 @@ fn render_crossfeed(crossfeed: &Crossfeed) -> String {
 /// file it is told to include missing is a different state from one that is
 /// present and does nothing. This says plainly what it is, so anyone reading
 /// the config directory finds an explanation rather than a mystery.
+/// Bypass means off. Not level-matched, not partially applied -- off.
+///
+/// Carrying the preamp across without the filters it exists for was tried and
+/// was worse: the headroom is there so a *boosted* curve peaks near unity, so
+/// keeping it while removing the boost made the bypassed side 10 dB quieter
+/// than the corrected one. Measured, on a sweep: -20.9 dB against -11.2 dB.
+///
+/// The level difference between the two sides is real and worth knowing about,
+/// but it belongs on screen where it can be read, not silently compensated for
+/// in a file nobody opens.
 pub fn render_bypassed() -> String {
     let mut out = String::new();
     out.push_str(MARKER);
     out.push_str("\n# Written by Attune. Edits will be overwritten.\n");
-    out.push_str("#\n");
-    out.push_str("# Attune is bypassed. Nothing here is being applied, so you are\n");
-    out.push_str("# hearing the channels as they come out of the GoXLR. Unbypass in\n");
-    out.push_str("# the Headphones tab to put the corrections back.\n");
+    out.push_str("# Attune is bypassed. Unbypass in the Headphones tab.\n");
     out
 }
 
@@ -629,6 +636,7 @@ mod tests {
         assert!(!config.contains("Filter"));
         assert!(!config.contains("Device:"));
     }
+
 
     /// The stock APO install ships a preamp and a bass-boosting example, both
     /// of which load before Attune's config and colour every measurement.
