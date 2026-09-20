@@ -8,6 +8,13 @@
               :slider-value=getGainValue() :store-path="getStorePath()" @value-changed="setGain" />
 
       <AudioMeter :active="polling" />
+
+      <!--
+        Attune sits in the setup flow because gain is the first thing it
+        corrects, and gain is what this modal is for. Measuring it belongs
+        next to setting it by hand, not on another screen.
+      -->
+      <AttuneTuner ref="attune" />
     </ContentContainer>
   </CenteredContainer>
 </template>
@@ -21,10 +28,11 @@ import ContentContainer from "@/components/containers/ContentContainer.vue";
 import CenteredContainer from "@/components/containers/CenteredContainer.vue";
 import {isDeviceMini} from "@/util/util";
 import AudioMeter from "@/components/sections/mic/AudioMeter.vue";
+import AttuneTuner from "@/components/sections/mic/AttuneTuner.vue";
 
 export default {
   name: "SetupModel",
-  components: {AudioMeter, CenteredContainer, ContentContainer, RadioSelection, Slider},
+  components: {AttuneTuner, AudioMeter, CenteredContainer, ContentContainer, RadioSelection, Slider},
   data: function() {
     return {
       polling: false,
@@ -85,9 +93,13 @@ export default {
 
     opened() {
       this.polling = true;
+      this.$refs.attune?.refresh();
     },
     closed() {
       this.polling = false;
+      // Closing the modal does not unmount it, so the countdown would keep
+      // ticking against a recording nobody can see.
+      this.$refs.attune?.stopDisplay();
     }
   },
 }

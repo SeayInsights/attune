@@ -1,9 +1,14 @@
 <!--
   Attune: measure the mic, derive settings, apply them.
 
-  Lives in the Mic tab beside Gate, Equaliser and Compressor, because those are
-  exactly the controls it moves. Applying a change here updates those sliders in
-  place over the websocket, so the effect is visible without changing screens.
+  Lives inside the Mic Setup modal, beside the mic type selector, the gain
+  slider and the level meter. Gain is the first thing Attune corrects and the
+  main thing this modal exists to set, so measuring it belongs next to setting
+  it by hand.
+
+  Applying a change updates the gain slider to its left in place over the
+  daemon's websocket patch -- the same mechanism that slider already uses -- so
+  there is nothing to refresh and no screen to change.
 -->
 <template>
   <GroupContainer title="Attune" :side-padding="'16px'">
@@ -141,6 +146,22 @@ export default {
   },
 
   methods: {
+    /// Called when the setup modal opens. Device and target lists are cheap and
+    /// can change between openings -- a mic unplugged, a device renamed.
+    refresh() {
+      this.loadTargets();
+      this.loadDevices();
+    },
+
+    /// Called when the setup modal closes. Closing does not unmount, so without
+    /// this the countdown keeps running against a recording nobody can see.
+    stopDisplay() {
+      if (this.timer) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
+    },
+
     shortDevice(d) {
       // Windows device names carry the driver's decoration. The bus name is
       // the part that identifies it.
@@ -220,7 +241,7 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: 340px;
+  width: 300px;
   color: #fff;
   font-size: 14px;
   text-align: left;
