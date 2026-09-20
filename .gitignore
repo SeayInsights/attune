@@ -12,3 +12,11 @@
 
 # Dream Studio project marker -- local authority state, not project source
 .dream-studio-project
+
+# Portable Node used to build the UI. Fetched by scripts/build-ui.ps1.
+.tools/
+
+# UI build inputs and outputs. daemon/web-content IS committed (the daemon
+# embeds it at compile time via include_dir), but these are not.
+ui/node_modules/
+ui/dist/

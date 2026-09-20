@@ -1,15 +1,15 @@
-//! Attune's page and endpoints, mounted into the daemon's existing web server.
+//! Attune's HTTP endpoints, mounted into the daemon's existing web server.
 //!
-//! # Why a separate page rather than edits to the existing UI
+//! # There is no page here
 //!
-//! The daemon serves a prebuilt Vite bundle whose source lives in another
-//! repository. Editing it here is not possible, and vendoring the built output
-//! would put a megabyte of compiled JavaScript in every diff.
+//! An earlier version served its own page at `/attune`. That was wrong: it put
+//! Attune beside the application instead of inside it, with its own look and its
+//! own URL, which is not what a tab is.
 //!
-//! So Attune serves its own page at `/attune`, from its own crate, against its
-//! own endpoints. Upstream's UI is left exactly as it is. The entire coupling to
-//! upstream is one `.configure(attune_web::services)` call in the daemon's HTTP
-//! server -- which is about as small as a merge conflict surface gets.
+//! The UI now lives in `ui/` as an ordinary tab in the Vue app, built into
+//! `daemon/web-content` by `scripts/build-ui.ps1`. These endpoints are what that
+//! tab calls. The only coupling to upstream's Rust is one
+//! `.configure(attune_web::services)` call in the daemon's HTTP server.
 //!
 //! # Why the endpoints talk to the daemon over HTTP
 //!
@@ -29,23 +29,12 @@ use attune_control::diagnose::diagnose;
 use attune_tuner::{apply, derive, targets};
 use serde::{Deserialize, Serialize};
 
-/// The page itself. Single file, no build step, no bundler.
-const PAGE: &str = include_str!("page.html");
-
 /// Register Attune's routes.
 pub fn services(cfg: &mut web::ServiceConfig) {
-    cfg.service(page)
-        .service(state)
+    cfg.service(state)
         .service(list_targets)
         .service(devices)
         .service(tune);
-}
-
-#[get("/attune")]
-async fn page() -> impl Responder {
-    HttpResponse::Ok()
-        .content_type("text/html; charset=utf-8")
-        .body(PAGE)
 }
 
 #[derive(Serialize)]
