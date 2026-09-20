@@ -13,7 +13,7 @@ use crate::ControlError;
 use crate::client::DaemonClient;
 
 /// A snapshot of the mic chain, flattened out of the daemon's nested status.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct MicChain {
     /// Which preamp the device is using. An XLR dynamic mic is `Dynamic`; a
     /// phantom-powered condenser is `Condenser`; the 3.5 mm input is `Jack`.

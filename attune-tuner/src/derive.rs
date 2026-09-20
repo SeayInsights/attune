@@ -53,7 +53,7 @@ const MAX_GAIN_STEP_DB: f32 = 12.0;
 const MIN_SNR_FOR_GATING_DB: f32 = 15.0;
 
 /// One proposed change.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Change {
     /// Which setting.
     pub setting: &'static str,
@@ -66,7 +66,7 @@ pub struct Change {
 }
 
 /// What the tuner concluded.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Recommendation {
     /// Changes to apply, in the order they should be applied.
     pub changes: Vec<Change>,

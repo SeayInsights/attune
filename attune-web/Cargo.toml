@@ -1,0 +1,21 @@
+[package]
+name = "attune-web"
+description = "Attune's page and HTTP endpoints, mounted into the daemon's existing web server."
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+# Matches the version the daemon already serves with, so one actix is linked.
+actix-web = "4.11"
+
+attune-control = { path = "../attune-control" }
+attune-analysis = { path = "../attune-analysis" }
+attune-tuner = { path = "../attune-tuner" }

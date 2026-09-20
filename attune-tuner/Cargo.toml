@@ -12,8 +12,9 @@ log = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+serde = { workspace = true }
 
-goxlr-types = { path = "../types" }
+goxlr-types = { path = "../types", features = ["serde"] }
 attune-control = { path = "../attune-control" }
 attune-analysis = { path = "../attune-analysis" }
 

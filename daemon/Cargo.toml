@@ -16,6 +16,9 @@ tts = ["dep:tts"]
 goxlr-usb = { path = "../usb" }
 goxlr-ipc = { path = "../ipc" }
 goxlr-types = { path = "../types" }
+
+# Attune's web surface, mounted into the HTTP server above.
+attune-web = { path = "../attune-web" }
 goxlr-audio = { path = "../audio" }
 goxlr-profile-loader = { path = "../profile" }
 goxlr-scribbles = { path = "../scribbles" }

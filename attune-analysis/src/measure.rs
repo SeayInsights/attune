@@ -35,7 +35,7 @@ const CLIP_THRESHOLD: f32 = 0.999;
 const ABSOLUTE_SILENCE_DBFS: f32 = -80.0;
 
 /// What a capture tells us about the signal.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Measurement {
     /// Capture length in seconds.
     pub duration_secs: f64,

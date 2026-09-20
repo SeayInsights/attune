@@ -17,7 +17,9 @@ tokio = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 
 goxlr-ipc = { path = "../ipc" }
-goxlr-types = { path = "../types" }
+# serde feature: MicChain is serialised to the Attune web UI, and its typed
+# mic_type and compressor_ratio come from this crate.
+goxlr-types = { path = "../types", features = ["serde"] }
 
 [[bin]]
 name = "attune-check"

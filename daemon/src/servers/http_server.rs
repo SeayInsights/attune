@@ -87,6 +87,9 @@ pub async fn spawn_http_server(
             .service(get_scribble)
             .service(get_path)
             .service(upload_firmware)
+            // Attune's page and endpoints. Kept in their own crate so this stays
+            // a one-line addition and upstream's UI is untouched.
+            .configure(attune_web::services)
             .default_service(web::to(default))
     })
     .bind((settings.bind_address.clone(), settings.port));
