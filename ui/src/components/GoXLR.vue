@@ -23,6 +23,13 @@
             <Mixer/>
           </ContentContainer>
         </Tab>
+        <!--
+          Attune's headphone correction. A literal tab name rather than a $t()
+          key, so no entry is needed in every language file upstream ships.
+        -->
+        <Tab id="headphones" name="Headphones">
+          <HeadphonesTab/>
+        </Tab>
         <Tab id="configuration" :name="$t('message.navigation.configuration')">
           <ContentContainer>
             <CenteredContainer>
@@ -128,6 +135,7 @@ import Tabs from "@/components/tabs/Tabs.vue";
 import Tab from "@/components/tabs/Tab.vue";
 import Routing from "@/components/sections/Routing.vue";
 import Mic from "@/components/sections/Mic.vue";
+import HeadphonesTab from "@/components/sections/HeadphonesTab.vue";
 import DeviceSelector from "@/components/sections/DeviceSelector.vue";
 import {store} from "@/store";
 import Cough from "@/components/sections/Cough.vue";
@@ -151,6 +159,7 @@ export default {
   name: "GoXLR",
   expose: ['openFirmwareUpdateProgressModal'],
   components: {
+    HeadphonesTab,
     ProgressBar,
     AccessibleModal,
     Language,

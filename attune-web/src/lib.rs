@@ -1,4 +1,4 @@
-﻿//! Attune's HTTP endpoints, mounted into the daemon's existing web server.
+//! Attune's HTTP endpoints, mounted into the daemon's existing web server.
 //!
 //! # There is no page here
 //!
@@ -30,7 +30,6 @@ use attune_tuner::{apply, derive, targets};
 use serde::{Deserialize, Serialize};
 
 pub mod eq;
-pub mod profiles;
 
 /// Register Attune's routes.
 pub fn services(cfg: &mut web::ServiceConfig) {
@@ -38,8 +37,7 @@ pub fn services(cfg: &mut web::ServiceConfig) {
         .service(list_targets)
         .service(devices)
         .service(tune)
-        .configure(eq::services)
-        .configure(profiles::services);
+        .configure(eq::services);
 }
 
 #[derive(Serialize)]
