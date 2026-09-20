@@ -1,0 +1,25 @@
+[package]
+name = "attune-app"
+description = "Attune's desktop window: the daemon's UI in a native window rather than a browser tab."
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+anyhow = { workspace = true }
+log = { workspace = true }
+# Decoding the .ico at startup so the window and taskbar carry the icon. The
+# resource script gives the *file* an icon in Explorer; a window's icon is a
+# separate thing and has to be set explicitly.
+image = { workspace = true, features = ["ico"] }
+tao = "0.37.0"
+wry = "0.57.0"
+
+[target.'cfg(windows)'.build-dependencies]
+windres = { workspace = true }
+
+[[bin]]
+name = "attune-app"
+path = "src/main.rs"

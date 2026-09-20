@@ -42,7 +42,7 @@ DefaultGroupName=Attune
 ; for whoever actually uses the machine.
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-UninstallDisplayIcon={app}\goxlr-daemon.exe
+UninstallDisplayIcon={app}\attune-app.exe
 Compression=lzma2
 SolidCompression=yes
 LicenseFile=..\LICENSE
@@ -60,6 +60,14 @@ Source: "..\target\release\goxlr-daemon.exe";   DestDir: "{app}"
 Source: "..\target\release\goxlr-client.exe";   DestDir: "{app}"
 Source: "..\target\release\goxlr-defaults.exe"; DestDir: "{app}"
 Source: "..\target\release\goxlr-launcher.exe"; DestDir: "{app}"
+
+; The window. Upstream opens its UI by shell-opening the URL, so the
+; application arrives as a tab in whatever browser is default. This hosts the
+; same page in a window of its own through WebView2 -- the engine Edge already
+; uses and which ships with Windows, so there is no second browser bundled
+; here. It registers itself with the daemon on first run, which is what makes
+; the tray icon open the window too rather than a browser.
+Source: "..\target\release\attune-app.exe";     DestDir: "{app}"
 
 ; The MCP server. Optional at runtime -- Attune works with no AI configured --
 ; but shipped so that pointing a model at it needs no separate download.
@@ -79,16 +87,42 @@ Source: "..\NOTICE";                            DestDir: "{app}"
 
 [Tasks]
 Name: StartOnLogin; Description: "Start Attune automatically when I log in"
+Name: DesktopIcon;  Description: "Create a desktop shortcut"; Flags: unchecked
 
 [Icons]
-Name: "{group}\Attune";           Filename: "{app}\goxlr-launcher.exe"
+Name: "{group}\Attune";           Filename: "{app}\attune-app.exe"
 Name: "{group}\Uninstall Attune"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\Attune";     Filename: "{app}\attune-app.exe"; Tasks: DesktopIcon
 ; {autostartup} follows the install mode, so it lands in the right place whether
 ; this was installed for one user or for everybody.
 Name: "{autostartup}\Attune";     Filename: "{app}\goxlr-daemon.exe"; Tasks: StartOnLogin
 
+[UninstallRun]
+; Stop what is running before trying to delete it.
+;
+; CloseApplications=force is supposed to cover this and does not. Measured:
+; uninstalling with the window open removes everything except the two binaries
+; that are executing, schedules those for deletion on the next reboot, and
+; leaves WebView2's profile behind because its child processes still hold it
+; open -- while reporting success throughout.
+;
+; The process tree, not the process: closing attune-app on its own orphans its
+; WebView2 children, and they are what keep the profile locked.
+Filename: "{sys}\taskkill.exe"; Parameters: "/IM attune-app.exe /T /F"; \
+  Flags: runhidden; RunOnceId: "StopWindow"
+Filename: "{sys}\taskkill.exe"; Parameters: "/IM goxlr-daemon.exe /T /F"; \
+  Flags: runhidden; RunOnceId: "StopDaemon"
+
+[UninstallDelete]
+; WebView2's profile: cache, shader caches, logs. Disposable, and large enough
+; to be worth removing -- a test install left 275 files there. Attune's own
+; settings under %APPDATA%\Attune are deliberately left alone: corrections
+; somebody measured and tuned are not the installer's to throw away, and
+; reinstalling should find them again.
+Type: filesandordirs; Name: "{localappdata}\Attune\WebView2"
+
 [Run]
-Filename: "{app}\goxlr-launcher.exe"; Description: "Start Attune"; \
+Filename: "{app}\attune-app.exe"; Description: "Start Attune"; \
   Flags: shellexec skipifsilent nowait postinstall
 
 [Code]

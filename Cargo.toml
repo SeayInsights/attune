@@ -22,6 +22,7 @@ members = [
     "attune-eq",
     "attune-web",
     "attune-mcp",
+    "attune-app",
 ]
 
 [workspace.package]
