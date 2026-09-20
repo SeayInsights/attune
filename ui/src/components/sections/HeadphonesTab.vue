@@ -1,133 +1,181 @@
 <!--
   The Headphones tab.
 
-  Its own tab rather than a panel in the Mixer, because it is a whole subject:
-  what each output bus does to what you hear.
+  Laid out like a mixer's equaliser rather than a settings form: one bus at a
+  time, a large curve you drag directly, and the processors that follow it as
+  separate cards.
 
-  Settings here are saved against the GoXLR profile that is currently loaded, so
-  they follow it. There is no separate save button and no second profile list --
-  the one at the top left is the only one.
+  Settings save against the GoXLR profile that is loaded, so they follow it.
+  There is no separate save button and no second profile list -- the one at the
+  top left is the only one.
 -->
 <template>
   <div class="tab">
 
-    <!-- What this is, because it is not obvious from a row of sliders. -->
-    <div class="intro">
-      <div class="lead">
-        Your GoXLR sends Game, Music, Chat and System to Windows as four separate
-        devices. That means each one can be equalised differently, at the same
-        time &mdash; a lean curve for hearing footsteps while music stays full.
+    <!-- Which bus ------------------------------------------------------ -->
+    <div class="topbar">
+      <div class="bustabs">
+        <button v-for="b in buses" :key="b.name"
+                class="bustab" :class="{ on: b.name === selectedName }"
+                @click="selectedName = b.name">
+          {{ b.name }}
+          <span class="dot" v-if="!isFlat(b)"></span>
+        </button>
       </div>
-      <div class="sub">
-        Nothing here touches your microphone, and nothing adds delay: the
-        filtering runs inside the Windows audio pipeline, not inside Attune.
-        Changes save against the <strong>{{ profile || '…' }}</strong> profile
-        and follow it when you switch.
+
+      <div class="topright">
+        <span class="profilechip" :title="'Saved against the ' + profile + ' profile'">
+          {{ profile || '…' }}
+        </span>
+        <button @click="verify" :disabled="busy || !apoReady">Test</button>
+        <button class="accent" @click="applyAll" :disabled="busy || !apoReady">Apply</button>
       </div>
     </div>
 
-    <div class="apo" :class="{ missing: apo && !apo.installed }" v-if="apo">
+    <div class="apo" :class="{ missing: apo && !apo.installed }" v-if="apo && !apo.included">
       {{ apo.guidance }}
     </div>
     <div class="bad" v-if="error">{{ error }}</div>
+    <div class="note" v-if="status">{{ status }}</div>
 
-    <div class="bar">
-      <button class="accent" @click="applyAll" :disabled="busy || !apo || !apo.installed">
-        Apply to my headphones
-      </button>
-      <button @click="verify" :disabled="busy || !apo || !apo.installed">
-        Verify it's working
-      </button>
-      <span class="status" v-if="status">{{ status }}</span>
-    </div>
+    <template v-if="selected">
 
-    <div class="buses">
-      <div class="bus" v-for="bus in buses" :key="bus.name">
-
-        <div class="bhead">
-          <span class="bname">{{ bus.name }}</span>
-          <span class="bwarn" v-if="!bus.device">no matching Windows device</span>
-          <span class="bdim" v-else-if="bus.headroom_db > 0.05">
-            &minus;{{ bus.headroom_db.toFixed(1) }} dB headroom
-          </span>
-        </div>
-
-        <!-- 1. Which headphones -->
-        <div class="layer">
-          <div class="ltitle">1 &middot; Your headphones</div>
-          <div class="lwhy">A measured correction for your exact model, undoing
-            what is wrong with them. Attune does not invent these.</div>
-          <div class="lrow">
-            <span class="lval" :class="{ none: !bus.correction_name }">
-              {{ bus.correction_name || 'none set' }}
-            </span>
-            <button class="link" @click="openSearch(bus)" :disabled="busy">
-              {{ bus.correction_name ? 'change' : 'choose' }}
-            </button>
-            <button class="link" v-if="bus.correction_name"
-                    @click="clearCorrection(bus)" :disabled="busy">clear</button>
-          </div>
-        </div>
-
-        <!-- 2. What for -->
-        <div class="layer">
-          <div class="ltitle">2 &middot; What this bus is for</div>
-          <div class="lwhy">{{ voicingDescription(bus.voicing) }}</div>
-          <select :value="bus.voicing" :disabled="busy"
-                  @change="setVoicing(bus, $event.target.value)">
+      <!-- Preset row -------------------------------------------------- -->
+      <div class="card row">
+        <div class="field">
+          <label>Preset</label>
+          <select :value="selected.voicing" :disabled="busy"
+                  @change="setVoicing($event.target.value)">
             <option v-for="v in voicings" :key="v.name" :value="v.name">{{ v.name }}</option>
           </select>
+          <span class="hint">{{ voicingDescription(selected.voicing) }}</span>
         </div>
 
-        <!-- 3. Your own adjustments -->
-        <div class="layer">
-          <div class="ltitle">3 &middot; Your own adjustments</div>
-          <div class="lwhy">Trim any band by ear. These sit on top of the two
-            above and survive changing either.</div>
-
-          <div class="band" v-for="(hz, i) in bandCentres" :key="hz">
-            <span class="bhz">{{ label(hz) }}</span>
-            <input type="range" :min="-limit" :max="limit" step="0.5"
-                   :value="bus.manual[i]" :disabled="busy"
-                   @input="onManual(bus, i, $event.target.value)"/>
-            <span class="bdb" :class="{ zero: Math.abs(bus.manual[i]) < 0.05 }">
-              {{ bus.manual[i] > 0 ? '+' : '' }}{{ bus.manual[i].toFixed(1) }}
+        <div class="field">
+          <label>Headphones</label>
+          <div class="inline">
+            <span class="value" :class="{ none: !selected.correction_name }">
+              {{ shortName(selected.correction_name) || 'none chosen' }}
             </span>
+            <button class="ghost" @click="openSearch" :disabled="busy">
+              {{ selected.correction_name ? 'Change' : 'Choose' }}
+            </button>
+            <button class="ghost" v-if="selected.correction_name"
+                    @click="clearCorrection" :disabled="busy">Clear</button>
+          </div>
+          <span class="hint">A measured correction for your model, from AutoEQ.</span>
+        </div>
+      </div>
+
+      <!-- Equaliser ---------------------------------------------------- -->
+      <div class="card">
+        <div class="cardhead">
+          <span class="cardtitle">Equaliser</span>
+          <span class="cardnote" v-if="selected.headroom_db > 0.05">
+            &minus;{{ selected.headroom_db.toFixed(1) }} dB headroom applied so it cannot clip
+          </span>
+          <button class="ghost" @click="resetBands" :disabled="busy">Reset bands</button>
+        </div>
+
+        <!-- Region headers, so the plot is readable without knowing Hz -->
+        <div class="regions">
+          <div class="region" v-for="r in regions" :key="r.label"
+               :style="{ flexGrow: r.span }">{{ r.label }}</div>
+        </div>
+
+        <div class="plotwrap">
+          <div class="ylabels">
+            <span>+12 dB</span><span>+6</span><span>0</span><span>&minus;6</span><span>&minus;12</span>
           </div>
 
-          <button class="link flat" @click="resetManual(bus)" :disabled="busy">
-            reset all bands
-          </button>
-        </div>
+          <svg ref="plot" class="plot" :viewBox="`0 0 ${W} ${H}`"
+               @pointermove="onDrag" @pointerup="endDrag" @pointerleave="endDrag">
+            <!-- grid -->
+            <line v-for="g in [0,1,2,3,4]" :key="'h'+g"
+                  x1="0" :y1="g*(H/4)" :x2="W" :y2="g*(H/4)"
+                  :stroke="g === 2 ? '#4a524e' : '#262b29'" stroke-width="1"/>
+            <line v-for="hz in gridFreqs" :key="'v'+hz"
+                  :x1="xFor(hz)" y1="0" :x2="xFor(hz)" :y2="H"
+                  stroke="#262b29" stroke-width="1"/>
 
-        <!-- The result -->
-        <div class="layer">
-          <div class="ltitle">Result</div>
-          <svg class="plot" viewBox="0 0 300 80" preserveAspectRatio="none" aria-hidden="true">
-            <line v-for="g in [20,40,60]" :key="g" x1="0" :y1="g" x2="300" :y2="g"
-                  stroke="#2b302e" stroke-width="1"/>
-            <line x1="0" y1="40" x2="300" y2="40" stroke="#3b413f" stroke-width="1"/>
-            <polyline :points="plot(bus.response)" fill="none" stroke="#59b1b6" stroke-width="2"/>
+            <!-- flat reference, so the active curve reads as a departure -->
+            <line x1="0" :y1="H/2" :x2="W" :y2="H/2" stroke="#6b736f"
+                  stroke-width="1.5" stroke-dasharray="4 4"/>
+
+            <!-- the composed response -->
+            <polyline :points="responsePoints" fill="none" stroke="#59b1b6" stroke-width="2.5"/>
+
+            <!-- draggable band handles -->
+            <g v-for="(hz, i) in bandCentres" :key="hz">
+              <circle :cx="xFor(hz)" :cy="yForGain(selected.manual[i])" r="9"
+                      :fill="bandColour(i)" :opacity="dragging === i ? 1 : 0.9"
+                      class="handle" @pointerdown="startDrag(i, $event)"/>
+              <title>{{ label(hz) }}: {{ selected.manual[i].toFixed(1) }} dB</title>
+            </g>
           </svg>
-          <div class="axis"><span>20 Hz</span><span>1 kHz</span><span>20 kHz</span></div>
         </div>
 
-      </div>
-    </div>
+        <div class="xlabels">
+          <span v-for="hz in gridFreqs" :key="'l'+hz"
+                :style="{ left: (xFor(hz) / W * 100) + '%' }">{{ label(hz) }}</span>
+        </div>
 
-    <!-- Headphone picker -->
-    <div class="modal" v-if="searching" @click.self="searching = null">
+        <div class="hint plothint">
+          Drag a dot to change that band. These sit on top of your headphone
+          correction and the preset, and survive changing either.
+        </div>
+      </div>
+
+      <!-- Tone + spatial ---------------------------------------------- -->
+      <div class="cards">
+        <div class="card">
+          <div class="cardhead"><span class="cardtitle">Tone</span>
+            <button class="ghost" @click="resetMacros" :disabled="busy">Reset</button>
+          </div>
+          <div class="macro" v-for="m in ['bass','voice','treble']" :key="m">
+            <label>{{ m }}</label>
+            <input type="range" :min="-macroLimit" :max="macroLimit" step="0.5"
+                   :value="selected.macros[m]" :disabled="busy"
+                   @input="onMacro(m, $event.target.value)"/>
+            <span class="val">{{ selected.macros[m] > 0 ? '+' : '' }}{{ selected.macros[m].toFixed(1) }}</span>
+          </div>
+          <div class="hint">Broad controls, for when you want "a bit more bass"
+            rather than a specific band.</div>
+        </div>
+
+        <div class="card">
+          <div class="cardhead"><span class="cardtitle">Spatial</span></div>
+          <div class="hint">
+            Windows has spatial audio built in &mdash; Windows Sonic for
+            Headphones is free and turns surround into a headphone mix. Attune
+            does not reimplement it; enable it per device in Windows sound
+            settings and it stacks with everything here.
+          </div>
+          <button class="ghost" @click="openSpatial">Open sound settings</button>
+          <div class="hint">
+            Crossfeed &mdash; softening headphones' unnaturally hard left/right
+            split &mdash; is coming next; it is a different thing from surround
+            virtualisation and I would rather label it honestly than call it
+            spatial audio.
+          </div>
+        </div>
+      </div>
+
+    </template>
+
+    <!-- Headphone picker ------------------------------------------------ -->
+    <div class="modal" v-if="searching" @click.self="searching = false">
       <div class="sheet">
-        <div class="stitle">Choose headphones for {{ searching.name }}</div>
-        <div class="lwhy">
+        <div class="stitle">Choose headphones</div>
+        <div class="hint">
           Searches AutoEQ's published measurements. The same model measured by
           different people on different rigs gives different corrections, so the
           measurer is shown &mdash; which to trust is a real choice.
         </div>
-        <input v-model="query" @input="runSearch" placeholder="e.g. DT 990 Pro" autofocus/>
-        <label class="allbuses">
+        <input v-model="query" @input="runSearch" placeholder="e.g. DT 990 Pro"/>
+        <label class="check">
           <input type="checkbox" v-model="applyToAll"/>
-          Use for all four buses (you only have one pair of headphones on)
+          Use on all four buses &mdash; you only wear one pair
         </label>
 
         <div class="hits" v-if="hits.length">
@@ -137,11 +185,11 @@
             <span class="hprov">{{ h.provenance }}</span>
           </button>
         </div>
-        <div class="lwhy" v-else-if="searched && query.trim()">
+        <div class="hint" v-else-if="searched && query.trim()">
           Nothing matched. Try a shorter query &mdash; model names vary.
         </div>
 
-        <button @click="searching = null" :disabled="busy">Close</button>
+        <button @click="searching = false" :disabled="busy">Close</button>
       </div>
     </div>
 
@@ -151,33 +199,63 @@
 <script>
 import { store } from "@/store";
 
+const W = 1000;
+const H = 340;
+const F_MIN = 20;
+const F_MAX = 20000;
+
 export default {
   name: "HeadphonesTab",
 
   data() {
     return {
+      W, H,
       profile: null,
       apo: null,
       buses: [],
       voicings: [],
       bandCentres: [],
       limit: 12,
+      macroLimit: 10,
+      selectedName: "Game",
+      dragging: null,
       busy: false,
       error: null,
       status: null,
-      searching: null,
+      searching: false,
       query: "",
       hits: [],
       searched: false,
       searchTimer: null,
       saveTimer: null,
       applyToAll: true,
+      gridFreqs: [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000],
+      // Widths are proportional to how much log-frequency each region covers.
+      regions: [
+        { label: "SUB BASS", span: 1 },
+        { label: "BASS", span: 1.3 },
+        { label: "LOW MIDS", span: 1 },
+        { label: "MID RANGE", span: 1.3 },
+        { label: "UPPER MIDS", span: 1.3 },
+        { label: "HIGHS", span: 1.6 },
+      ],
     };
   },
 
   computed: {
-    // Settings belong to the loaded GoXLR profile, so a profile change has to
-    // pull a different set of settings in.
+    selected() {
+      return this.buses.find((b) => b.name === this.selectedName) || null;
+    },
+    apoReady() {
+      return this.apo && this.apo.installed;
+    },
+    responsePoints() {
+      const r = this.selected && this.selected.response;
+      if (!r || !r.length) return "";
+      return r.map(([hz, db]) => `${this.xFor(hz).toFixed(1)},${this.yForGain(db).toFixed(1)}`).join(" ");
+    },
+    // Settings belong to the loaded GoXLR profile, so a profile change pulls a
+    // different set in.
     activeProfile() {
       try {
         return store.getActiveDevice().profile_name;
@@ -210,13 +288,101 @@ export default {
       return body;
     },
 
+    // ---- geometry ----
+
+    xFor(hz) {
+      const lo = Math.log(F_MIN), hi = Math.log(F_MAX);
+      return ((Math.log(hz) - lo) / (hi - lo)) * W;
+    },
+    yForGain(db) {
+      return H / 2 - (Math.max(-this.limit, Math.min(this.limit, db)) / this.limit) * (H / 2 - 12);
+    },
+    gainForY(y) {
+      return ((H / 2 - y) / (H / 2 - 12)) * this.limit;
+    },
     label(hz) {
       return hz >= 1000 ? hz / 1000 + "k" : String(hz);
     },
-
+    bandColour(i) {
+      // Spread across the spectrum so a dot's colour hints at its frequency.
+      const hue = 280 - (i / (this.bandCentres.length - 1)) * 280;
+      return `hsl(${hue}, 65%, 60%)`;
+    },
+    shortName(n) {
+      if (!n) return n;
+      return n.length > 42 ? n.slice(0, 40) + "…" : n;
+    },
+    isFlat(bus) {
+      if (!bus) return true;
+      const m = bus.macros || {};
+      return (
+        bus.voicing === "neutral" &&
+        !bus.correction_name &&
+        (bus.manual || []).every((v) => Math.abs(v) < 0.05) &&
+        Math.abs(m.bass || 0) < 0.05 &&
+        Math.abs(m.voice || 0) < 0.05 &&
+        Math.abs(m.treble || 0) < 0.05
+      );
+    },
     voicingDescription(name) {
       const v = this.voicings.find((x) => x.name === name);
       return v ? v.description : "";
+    },
+
+    // ---- dragging ----
+
+    startDrag(index, event) {
+      this.dragging = index;
+      event.target.setPointerCapture?.(event.pointerId);
+      this.applyDrag(event);
+    },
+    onDrag(event) {
+      if (this.dragging === null) return;
+      this.applyDrag(event);
+    },
+    applyDrag(event) {
+      const svg = this.$refs.plot;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      // The SVG scales to its box, so translate the pointer into viewBox units.
+      const y = ((event.clientY - rect.top) / rect.height) * H;
+      const gain = Math.max(-this.limit, Math.min(this.limit, this.gainForY(y)));
+      this.selected.manual[this.dragging] = Math.round(gain * 2) / 2;
+      this.queueSave();
+    },
+    endDrag() {
+      if (this.dragging === null) return;
+      this.dragging = null;
+      this.queueSave(0);
+    },
+
+    // ---- persistence ----
+
+    /// Dragging fires continuously; the local value updates at once so the
+    /// curve tracks the pointer, and the save is debounced so one drag is one
+    /// request rather than fifty.
+    queueSave(delay = 250) {
+      if (this.saveTimer) clearTimeout(this.saveTimer);
+      this.saveTimer = setTimeout(() => this.save(), delay);
+    },
+
+    async save() {
+      if (!this.selected) return;
+      try {
+        await this.getJSON("/api/attune/eq/set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bus: this.selected.name,
+            voicing: this.selected.voicing,
+            manual: this.selected.manual,
+            macros: this.selected.macros,
+          }),
+        });
+        await this.load();
+      } catch (e) {
+        this.error = e.message;
+      }
     },
 
     async load() {
@@ -228,59 +394,31 @@ export default {
         this.voicings = s.voicings;
         this.bandCentres = s.band_centres;
         this.limit = s.manual_limit_db;
+        this.macroLimit = s.macro_limit_db;
         this.error = null;
       } catch (e) {
         this.error = e.message;
       }
     },
 
-    plot(response) {
-      if (!response || !response.length) return "";
-      const lo = Math.log(20), hi = Math.log(20000);
-      return response
-        .map(([hz, db]) => {
-          const x = ((Math.log(hz) - lo) / (hi - lo)) * 300;
-          const y = 40 - (Math.max(-20, Math.min(20, db)) / 20) * 38;
-          return x.toFixed(1) + "," + y.toFixed(1);
-        })
-        .join(" ");
+    setVoicing(voicing) {
+      this.selected.voicing = voicing;
+      this.queueSave(0);
+    },
+    onMacro(which, value) {
+      this.selected.macros[which] = parseFloat(value);
+      this.queueSave();
+    },
+    resetBands() {
+      this.selected.manual = this.selected.manual.map(() => 0);
+      this.queueSave(0);
+    },
+    resetMacros() {
+      this.selected.macros = { bass: 0, voice: 0, treble: 0 };
+      this.queueSave(0);
     },
 
-    async setVoicing(bus, voicing) {
-      bus.voicing = voicing;
-      await this.save(bus);
-    },
-
-    /// Dragging a slider fires continuously; the local value updates at once so
-    /// the plot tracks, and the save is debounced so a drag is one request.
-    onManual(bus, index, value) {
-      bus.manual[index] = parseFloat(value);
-      if (this.saveTimer) clearTimeout(this.saveTimer);
-      this.saveTimer = setTimeout(() => this.save(bus), 200);
-    },
-
-    async resetManual(bus) {
-      bus.manual = bus.manual.map(() => 0);
-      await this.save(bus);
-    },
-
-    async save(bus) {
-      this.status = null;
-      try {
-        await this.getJSON("/api/attune/eq/set", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            bus: bus.name,
-            voicing: bus.voicing,
-            manual: bus.manual,
-          }),
-        });
-        await this.load();
-      } catch (e) {
-        this.error = e.message;
-      }
-    },
+    // ---- actions ----
 
     async applyAll() {
       this.busy = true;
@@ -300,19 +438,20 @@ export default {
     async verify() {
       this.busy = true;
       this.error = null;
-      this.status = "Playing test noise through Game for a few seconds…";
+      this.status = `Playing test noise through ${this.selectedName} for a few seconds…`;
       try {
         const r = await this.getJSON("/api/attune/eq/verify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ bus: "Game", seconds: 6 }),
+          body: JSON.stringify({ bus: this.selectedName, seconds: 6 }),
         });
-        const low = r.bands.find((b) => b.centre_hz === 125);
-        const high = r.bands.find((b) => b.centre_hz === 4000);
+        const at = (hz) => {
+          const b = r.bands.find((x) => x.centre_hz === hz);
+          return b ? b.level_db.toFixed(1) : "?";
+        };
         this.status =
-          `Measured the Game bus: ${low ? low.level_db.toFixed(1) : "?"} dB at 125 Hz, ` +
-          `${high ? high.level_db.toFixed(1) : "?"} dB at 4 kHz. ` +
-          `Run this with a curve on and off to see the difference.`;
+          `Measured ${this.selectedName}: ${at(125)} dB at 125 Hz, ${at(4000)} dB at 4 kHz. ` +
+          `Run it with a curve on and off to see the difference.`;
       } catch (e) {
         this.error = e.message;
       } finally {
@@ -320,13 +459,18 @@ export default {
       }
     },
 
-    openSearch(bus) {
-      this.searching = bus;
+    openSpatial() {
+      window.open("ms-settings:sound", "_blank");
+    },
+
+    // ---- headphone picker ----
+
+    openSearch() {
+      this.searching = true;
       this.query = "";
       this.hits = [];
       this.searched = false;
     },
-
     runSearch() {
       if (this.searchTimer) clearTimeout(this.searchTimer);
       this.searchTimer = setTimeout(async () => {
@@ -343,7 +487,6 @@ export default {
         }
       }, 250);
     },
-
     async importCorrection(hit) {
       this.busy = true;
       try {
@@ -351,12 +494,12 @@ export default {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            bus: this.searching.name,
+            bus: this.selectedName,
             path: hit.path,
             all_buses: this.applyToAll,
           }),
         });
-        this.searching = null;
+        this.searching = false;
         await this.load();
       } catch (e) {
         this.error = e.message;
@@ -364,14 +507,13 @@ export default {
         this.busy = false;
       }
     },
-
-    async clearCorrection(bus) {
+    async clearCorrection() {
       this.busy = true;
       try {
         await this.getJSON("/api/attune/eq/clear-correction", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ bus: bus.name }),
+          body: JSON.stringify({ bus: this.selectedName }),
         });
         await this.load();
       } catch (e) {
@@ -385,83 +527,95 @@ export default {
 </script>
 
 <style scoped>
-.tab { padding: 30px 40px 50px; color: #fff; text-align: left; }
+.tab { padding: 22px 30px 50px; color: #fff; text-align: left; }
 
-.intro { max-width: 900px; margin-bottom: 18px; }
-.lead { font-size: 15px; line-height: 1.5; }
-.sub { color: #8d9591; font-size: 13px; line-height: 1.5; margin-top: 6px; }
+.topbar { display: flex; justify-content: space-between; align-items: center;
+          gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+.bustabs { display: flex; gap: 2px; }
+.bustab { position: relative; background: none; color: #8d9591; border: 0;
+          border-bottom: 2px solid transparent; padding: 8px 18px;
+          font-family: inherit; font-size: 14px; cursor: pointer; }
+.bustab.on { color: #fff; border-bottom-color: #59b1b6; }
+.bustab .dot { position: absolute; top: 6px; right: 6px; width: 5px; height: 5px;
+               border-radius: 50%; background: #59b1b6; }
 
-.apo { max-width: 900px; color: #8d9591; font-size: 13px; line-height: 1.45;
-       border-left: 3px solid #59b1b6; background: #2d3230;
-       padding: 10px 12px; border-radius: 0 3px 3px 0; margin-bottom: 14px; }
-.apo.missing { border-left-color: #d9a441; }
+.topright { display: flex; align-items: center; gap: 8px; }
+.profilechip { background: #252927; color: #8d9591; font-size: 11px;
+               padding: 5px 9px; border-radius: 10px; }
 
-.bar { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
-.status { color: #8d9591; font-size: 13px; }
+.card { background: #2d3230; padding: 16px 18px; margin-bottom: 12px; }
+.cards { display: flex; gap: 12px; flex-wrap: wrap; }
+.cards .card { flex: 1 1 340px; margin-bottom: 0; }
 
-.buses { display: flex; flex-direction: row; gap: 15px; overflow-x: auto; padding-bottom: 12px; }
-.buses::-webkit-scrollbar { height: 6px; }
-.buses::-webkit-scrollbar-thumb { background: #3b413f; border-radius: 3px; }
+.card.row { display: flex; gap: 28px; flex-wrap: wrap; }
+.field { display: flex; flex-direction: column; gap: 5px; min-width: 260px; }
+.field label, .cardtitle { font-size: 11px; text-transform: uppercase;
+                           letter-spacing: .7px; color: #b4bcb8; }
+.inline { display: flex; align-items: center; gap: 6px; }
+.value { flex: 1; font-size: 13px; }
+.value.none { color: #8d9591; font-style: italic; }
 
-.bus { flex: 0 0 300px; background: #2d3230; padding: 16px; display: flex;
-       flex-direction: column; gap: 14px; }
+.cardhead { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.cardnote { color: #8d9591; font-size: 11px; flex: 1; }
+.cardhead .ghost { margin-left: auto; }
 
-.bhead { display: flex; justify-content: space-between; align-items: baseline;
-         border-bottom: 1px solid #3b413f; padding-bottom: 8px; }
-.bname { font-size: 15px; text-transform: uppercase; letter-spacing: .5px; }
-.bwarn { color: #d9a441; font-size: 11px; }
-.bdim { color: #8d9591; font-size: 11px; font-variant-numeric: tabular-nums; }
+.regions { display: flex; gap: 2px; margin-bottom: 6px; }
+.region { background: #252927; color: #8d9591; font-size: 10px;
+          letter-spacing: .6px; text-align: center; padding: 5px 0; }
 
-.layer { display: flex; flex-direction: column; gap: 5px; }
-.ltitle { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: #b4bcb8; }
-.lwhy { color: #8d9591; font-size: 11px; line-height: 1.45; }
-.lrow { display: flex; align-items: center; gap: 6px; }
-.lval { flex: 1; font-size: 12px; }
-.lval.none { color: #8d9591; font-style: italic; }
+.plotwrap { display: flex; gap: 8px; }
+.ylabels { display: flex; flex-direction: column; justify-content: space-between;
+           color: #6b736f; font-size: 10px; height: 200px; padding: 2px 0;
+           font-variant-numeric: tabular-nums; }
+.plot { flex: 1; height: 200px; background: #252927; touch-action: none; }
+.handle { cursor: ns-resize; }
+.handle:hover { r: 11; }
 
-select, input[type="text"], .modal input:not([type="checkbox"]):not([type="range"]) {
+.xlabels { position: relative; height: 16px; margin-top: 2px; margin-left: 46px; }
+.xlabels span { position: absolute; transform: translateX(-50%);
+                color: #6b736f; font-size: 10px; }
+.plothint { margin-top: 6px; }
+
+.macro { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+.macro label { width: 46px; text-transform: capitalize; color: #b4bcb8;
+               font-size: 12px; letter-spacing: 0; }
+.macro input[type="range"] { flex: 1; accent-color: #59b1b6; }
+.macro .val { width: 38px; text-align: right; color: #59b1b6; font-size: 11px;
+              font-variant-numeric: tabular-nums; }
+
+select, input[type="text"], .sheet input:not([type="checkbox"]) {
   background-color: #252927; color: #fff; border: 1px solid #3b413f;
-  border-radius: 3px; padding: 6px 8px; font-family: inherit; font-size: 12px; width: 100%;
+  border-radius: 3px; padding: 7px 9px; font-family: inherit; font-size: 13px; width: 100%;
 }
 
-button {
-  background-color: #3b413f; color: #fff; border: 0; border-radius: 3px;
-  padding: 8px 12px; font-family: inherit; font-size: 13px; cursor: pointer;
-}
+button { background-color: #3b413f; color: #fff; border: 0; border-radius: 3px;
+         padding: 8px 14px; font-family: inherit; font-size: 13px; cursor: pointer; }
 button.accent { background-color: #59b1b6; color: #0d1817; font-weight: 600; }
-button.link { background: none; color: #59b1b6; padding: 2px 4px; font-size: 11px; }
-button.link.flat { align-self: flex-start; margin-top: 2px; }
+button.ghost { background: none; border: 1px solid #3b413f; color: #b4bcb8;
+               padding: 5px 10px; font-size: 12px; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 
-.band { display: flex; align-items: center; gap: 7px; }
-.bhz { width: 34px; text-align: right; color: #8d9591; font-size: 10px;
-       font-variant-numeric: tabular-nums; }
-.bdb { width: 32px; text-align: right; font-size: 10px; color: #59b1b6;
-       font-variant-numeric: tabular-nums; }
-.bdb.zero { color: #6b736f; }
+.hint { color: #8d9591; font-size: 11px; line-height: 1.5; }
 
-input[type="range"] { flex: 1; height: 3px; accent-color: #59b1b6;
-                      background: #252927; cursor: pointer; }
+.apo, .note { color: #8d9591; font-size: 12px; line-height: 1.45;
+              border-left: 3px solid #59b1b6; background: #2d3230;
+              padding: 9px 12px; border-radius: 0 3px 3px 0; margin-bottom: 12px; }
+.apo.missing { border-left-color: #d9a441; }
+.bad { color: #e0655b; font-size: 12px; line-height: 1.45;
+       border-left: 3px solid #e0655b; background: #2d3230;
+       padding: 9px 12px; border-radius: 0 3px 3px 0; margin-bottom: 12px; }
 
-.plot { width: 100%; height: 80px; background: #252927; border-radius: 3px; }
-.axis { display: flex; justify-content: space-between; color: #6b736f; font-size: 9px; }
-
-.modal { position: fixed; inset: 0; background: rgba(0,0,0,.6);
-         display: flex; align-items: center; justify-content: center; z-index: 50; }
-.sheet { background: #2d3230; padding: 20px; width: 440px; max-height: 76vh;
-         display: flex; flex-direction: column; gap: 9px; overflow-y: auto; }
-.stitle { font-size: 15px; }
-.allbuses { display: flex; align-items: center; gap: 7px; color: #8d9591; font-size: 12px; }
-.allbuses input { width: auto; }
-
-.hits { display: flex; flex-direction: column; gap: 3px; max-height: 260px; overflow-y: auto; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 50;
+         display: flex; align-items: center; justify-content: center; }
+.sheet { background: #2d3230; padding: 22px; width: 460px; max-height: 76vh;
+         display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+.stitle { font-size: 16px; }
+.check { display: flex; align-items: center; gap: 8px; color: #8d9591; font-size: 12px; }
+.check input { width: auto; }
+.hits { display: flex; flex-direction: column; gap: 3px; max-height: 280px; overflow-y: auto; }
 .hit { display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
-       text-align: left; background: #252927; padding: 7px 10px; }
+       text-align: left; background: #252927; padding: 8px 11px; }
 .hit:hover:not(:disabled) { background: #343b38; }
 .hname { font-size: 12px; }
 .hprov { font-size: 10px; color: #8d9591; }
-
-.bad { max-width: 900px; color: #e0655b; font-size: 13px; line-height: 1.45;
-       border-left: 3px solid #e0655b; background: #2d3230;
-       padding: 10px 12px; border-radius: 0 3px 3px 0; margin-bottom: 14px; }
 </style>

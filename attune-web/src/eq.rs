@@ -46,6 +46,9 @@ pub(crate) const BAND_CENTRES: [f32; 10] = [
 /// How far a manual band may be pushed, in dB.
 const MANUAL_LIMIT_DB: f32 = 12.0;
 
+/// How far a macro tone control may be pushed, in dB.
+const MACRO_LIMIT_DB: f32 = 10.0;
+
 pub fn services(cfg: &mut web::ServiceConfig) {
     cfg.service(state)
         .service(set_bus)
@@ -69,7 +72,62 @@ fn settings_file() -> PathBuf {
     settings_path().join("headphones.json")
 }
 
-/// One bus's three layers.
+/// Broad tone controls, the three most people actually reach for.
+///
+/// Separate from the per-band trim because they answer a different question:
+/// "a bit more bass" is not the same request as "cut 3 dB at 125 Hz", and
+/// collapsing them would mean nudging a macro scribbles over bands somebody set
+/// deliberately.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Macros {
+    #[serde(default)]
+    pub bass: f32,
+    #[serde(default)]
+    pub voice: f32,
+    #[serde(default)]
+    pub treble: f32,
+}
+
+impl Macros {
+    fn filters(&self) -> Vec<Filter> {
+        let mut out = Vec::new();
+        let clamp = |v: f32| v.clamp(-MACRO_LIMIT_DB, MACRO_LIMIT_DB);
+
+        if self.bass.abs() >= 0.05 {
+            out.push(Filter {
+                kind: FilterKind::LowShelf,
+                freq_hz: 200.0,
+                gain_db: clamp(self.bass),
+                q: 0.7,
+            });
+        }
+        if self.voice.abs() >= 0.05 {
+            // Wide rather than narrow: this is meant to shift the whole
+            // presence region, not carve a notch in it.
+            out.push(Filter {
+                kind: FilterKind::Peaking,
+                freq_hz: 1800.0,
+                gain_db: clamp(self.voice),
+                q: 0.8,
+            });
+        }
+        if self.treble.abs() >= 0.05 {
+            out.push(Filter {
+                kind: FilterKind::HighShelf,
+                freq_hz: 5000.0,
+                gain_db: clamp(self.treble),
+                q: 0.7,
+            });
+        }
+        out
+    }
+
+    fn is_flat(&self) -> bool {
+        self.filters().is_empty()
+    }
+}
+
+/// One bus's layers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct BusSettings {
     #[serde(default = "neutral")]
@@ -79,6 +137,9 @@ pub(crate) struct BusSettings {
     /// Per-band trim in dB, one entry per [`BAND_CENTRES`].
     #[serde(default)]
     pub manual: Vec<f32>,
+    /// Broad bass / voice / treble tilt.
+    #[serde(default)]
+    pub macros: Macros,
 }
 
 fn neutral() -> String {
@@ -91,6 +152,7 @@ impl Default for BusSettings {
             voicing: neutral(),
             correction: None,
             manual: vec![0.0; BAND_CENTRES.len()],
+            macros: Macros::default(),
         }
     }
 }
@@ -197,6 +259,7 @@ fn compose(settings: &BusSettings) -> attune_eq::headroom::Managed {
     let voicing = profiles::by_name(&settings.voicing).unwrap_or(profiles::NEUTRAL);
     let mut composed = profiles::compose(settings.correction.as_ref(), voicing);
     composed.filters.extend(settings.manual_filters());
+    composed.filters.extend(settings.macros.filters());
     attune_eq::headroom::manage(&composed, attune_eq::headroom::DEFAULT_MARGIN_DB)
 }
 
@@ -204,6 +267,7 @@ fn is_empty(settings: &BusSettings) -> bool {
     settings.correction.is_none()
         && settings.voicing == "neutral"
         && settings.manual_filters().is_empty()
+        && settings.macros.is_flat()
 }
 
 fn write_config(store: &Store, profile: &str) -> Result<usize, String> {
@@ -260,6 +324,7 @@ struct BusView {
     voicing: String,
     correction_name: Option<String>,
     manual: Vec<f32>,
+    macros: Macros,
     headroom_db: f32,
     /// The composed response as (Hz, dB) for drawing.
     response: Vec<(f32, f32)>,
@@ -280,6 +345,7 @@ struct StateResponse {
     voicings: Vec<VoicingView>,
     band_centres: Vec<f32>,
     manual_limit_db: f32,
+    macro_limit_db: f32,
 }
 
 #[get("/api/attune/eq/state")]
@@ -343,6 +409,7 @@ async fn state() -> impl Responder {
                 } else {
                     vec![0.0; BAND_CENTRES.len()]
                 },
+                macros: settings.macros,
                 headroom_db: managed.headroom_applied_db,
                 response,
             }
@@ -362,6 +429,7 @@ async fn state() -> impl Responder {
             .collect(),
         band_centres: BAND_CENTRES.to_vec(),
         manual_limit_db: MANUAL_LIMIT_DB,
+        macro_limit_db: MACRO_LIMIT_DB,
     })
 }
 
@@ -375,6 +443,9 @@ struct SetRequest {
     /// Full manual trim, one entry per band.
     #[serde(default)]
     manual: Option<Vec<f32>>,
+    /// Broad bass / voice / treble tilt.
+    #[serde(default)]
+    macros: Option<Macros>,
 }
 
 /// Change one bus. Saves against the active profile; does not write to APO.
@@ -411,6 +482,13 @@ async fn set_bus(req: web::Json<SetRequest>) -> impl Responder {
                     .clamp(-MANUAL_LIMIT_DB, MANUAL_LIMIT_DB)
             })
             .collect();
+    }
+    if let Some(m) = req.macros {
+        bus.macros = Macros {
+            bass: m.bass.clamp(-MACRO_LIMIT_DB, MACRO_LIMIT_DB),
+            voice: m.voice.clamp(-MACRO_LIMIT_DB, MACRO_LIMIT_DB),
+            treble: m.treble.clamp(-MACRO_LIMIT_DB, MACRO_LIMIT_DB),
+        };
     }
 
     match save_store(&store) {
@@ -735,6 +813,7 @@ mod tests {
                     q: 1.0,
                 }],
             }),
+            macros: Macros::default(),
         };
 
         let managed = compose(&s);
