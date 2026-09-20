@@ -392,12 +392,29 @@ async fn state() -> impl Responder {
             let settings = per_bus.get(*name).unwrap_or(&default);
             let managed = compose(settings);
 
+            // The response is reported WITHOUT the preamp, so the plot shows the
+            // tonal shape rather than the shape plus a large constant offset.
+            //
+            // Headroom management can drop the preamp by 10 dB or more, which
+            // would push the whole curve to the floor of a +/-12 dB plot and read
+            // as "this does nothing" exactly where it does the most. The offset
+            // is reported separately as headroom_db, which is where it belongs:
+            // it is a level decision, not a tonal one.
+            let preamp = managed.curve.preamp_db;
+
             let mut response = Vec::new();
             let mut hz = 20.0_f32;
-            while hz <= 20_000.0 {
-                response.push((hz, managed.curve.response_at(hz)));
-                hz *= 1.259_921; // third-octave
+            while hz < 20_000.0 {
+                response.push((hz, managed.curve.response_at(hz) - preamp));
+                // Sixth-octave: fine enough that a narrow band reads as a bump
+                // rather than a corner, still a small payload.
+                hz *= 1.122_462;
             }
+            // The geometric walk lands at 18.2 kHz and the next step overshoots,
+            // so the last sixth of an octave would be missing and the plotted
+            // line would stop short of the right-hand edge -- which reads as
+            // "nothing happens up here" rather than "the sample grid ended".
+            response.push((20_000.0, managed.curve.response_at(20_000.0) - preamp));
 
             BusView {
                 name: name.to_string(),

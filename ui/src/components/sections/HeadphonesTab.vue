@@ -84,48 +84,52 @@
         </div>
 
         <div class="plotwrap">
+          <!-- Positioned by the same function as the grid lines and the
+               handles, so a label always names the line beside it. -->
           <div class="ylabels">
-            <span>+12 dB</span><span>+6</span><span>0</span><span>&minus;6</span><span>&minus;12</span>
+            <span v-for="db in gainGrid" :key="db" :style="{ top: yPct(db) + '%' }">
+              {{ db > 0 ? '+' : db < 0 ? '−' : '' }}{{ Math.abs(db) }}{{ db === limit ? ' dB' : '' }}
+            </span>
           </div>
 
           <div class="plotcol">
           <!--
-            The viewBox tracks the element's real pixel size rather than being
-            fixed. A fixed viewBox with a different aspect ratio is scaled
-            uniformly and centred by default, which letterboxes the contents
-            into a strip in the middle; forcing preserveAspectRatio="none"
-            would instead stretch the band handles into ellipses. Matching the
-            box means one unit is one pixel and neither happens.
+            preserveAspectRatio="none" so the grid and curve always span the
+            box, whatever its shape. That distorts anything that must stay
+            round, so the band handles are HTML positioned in percent over the
+            top rather than SVG circles inside it. Measuring the element and
+            matching the viewBox was tried first and kept letterboxing whenever
+            layout settled after the measurement.
           -->
-          <svg ref="plot" class="plot" :viewBox="`0 0 ${W} ${H}`"
-               @pointermove="onDrag" @pointerup="endDrag" @pointerleave="endDrag">
-            <!-- grid -->
-            <line v-for="g in [0,1,2,3,4]" :key="'h'+g"
-                  x1="0" :y1="g*(H/4)" :x2="W" :y2="g*(H/4)"
-                  :stroke="g === 2 ? '#4a524e' : '#262b29'" stroke-width="1"/>
-            <line v-for="hz in gridFreqs" :key="'v'+hz"
-                  :x1="xFor(hz)" y1="0" :x2="xFor(hz)" :y2="H"
-                  stroke="#262b29" stroke-width="1"/>
+          <div class="plotbox" ref="plot">
+            <svg class="plot" viewBox="0 0 1000 400" preserveAspectRatio="none">
+              <line v-for="db in gainGrid" :key="'h'+db"
+                    x1="0" :y1="yForGain(db)" x2="1000" :y2="yForGain(db)"
+                    stroke="#262b29" vector-effect="non-scaling-stroke" stroke-width="1"/>
+              <line v-for="hz in gridFreqs" :key="'v'+hz"
+                    :x1="xPct(hz)*10" y1="0" :x2="xPct(hz)*10" y2="400"
+                    stroke="#262b29" vector-effect="non-scaling-stroke" stroke-width="1"/>
+              <line x1="0" :y1="yForGain(0)" x2="1000" :y2="yForGain(0)" stroke="#6b736f"
+                    stroke-dasharray="4 4" vector-effect="non-scaling-stroke" stroke-width="1.5"/>
+              <polyline :points="responsePoints" fill="none" stroke="#59b1b6"
+                        vector-effect="non-scaling-stroke" stroke-width="2.5"
+                        stroke-linejoin="round"/>
+            </svg>
 
-            <!-- flat reference, so the active curve reads as a departure -->
-            <line x1="0" :y1="H/2" :x2="W" :y2="H/2" stroke="#6b736f"
-                  stroke-width="1.5" stroke-dasharray="4 4"/>
-
-            <!-- the composed response -->
-            <polyline :points="responsePoints" fill="none" stroke="#59b1b6" stroke-width="2.5"/>
-
-            <!-- draggable band handles -->
-            <g v-for="(hz, i) in bandCentres" :key="hz">
-              <circle :cx="xFor(hz)" :cy="yForGain(selected.manual[i])" r="9"
-                      :fill="bandColour(i)" :opacity="dragging === i ? 1 : 0.9"
-                      class="handle" @pointerdown="startDrag(i, $event)"/>
-              <title>{{ label(hz) }}: {{ selected.manual[i].toFixed(1) }} dB</title>
-            </g>
-          </svg>
+            <button v-for="(hz, i) in bandCentres" :key="hz" class="handle"
+                    :class="{ dragging: dragging === i }"
+                    :style="{ left: xPct(hz) + '%', top: yPct(selected.manual[i]) + '%',
+                              background: bandColour(i) }"
+                    :title="label(hz) + ': ' + selected.manual[i].toFixed(1) + ' dB'"
+                    :aria-label="label(hz) + ' band, ' + selected.manual[i].toFixed(1) + ' decibels'"
+                    @pointerdown="startDrag(i, $event)"
+                    @keydown.up.prevent="nudge(i, 0.5)"
+                    @keydown.down.prevent="nudge(i, -0.5)"></button>
+          </div>
 
           <div class="xlabels">
             <span v-for="hz in gridFreqs" :key="'l'+hz"
-                  :style="{ left: (xFor(hz) / W * 100) + '%' }">{{ label(hz) }}</span>
+                  :style="{ left: xPct(hz) + '%' }">{{ label(hz) }}</span>
           </div>
           </div>
         </div>
@@ -217,10 +221,10 @@ export default {
 
   data() {
     return {
-      // Measured from the element so the viewBox matches it one to one.
+      // Fixed viewBox units. The SVG does not preserve aspect ratio, so these
+      // are a drawing grid rather than a size -- nothing needs measuring.
       W: 1000,
-      H: 200,
-      resizeObserver: null,
+      H: 400,
       profile: null,
       apo: null,
       buses: [],
@@ -230,6 +234,8 @@ export default {
       macroLimit: 10,
       selectedName: "Game",
       dragging: null,
+      onMove: null,
+      onUp: null,
       busy: false,
       error: null,
       status: null,
@@ -260,6 +266,12 @@ export default {
     apoReady() {
       return this.apo && this.apo.installed;
     },
+    // Derived from the limit the daemon reports rather than hard-coded, so the
+    // scale still reads correctly if that limit ever changes.
+    gainGrid() {
+      const l = this.limit;
+      return [l, l / 2, 0, -l / 2, -l];
+    },
     responsePoints() {
       const r = this.selected && this.selected.response;
       if (!r || !r.length) return "";
@@ -284,20 +296,12 @@ export default {
 
   mounted() {
     this.load();
-    this.measure();
-    // The plot is fluid, so its size changes with the window and when the
-    // sidebar or tab content reflows. Recomputing on resize keeps the viewBox
-    // matched to the box rather than only correct at first paint.
-    if (typeof ResizeObserver !== "undefined" && this.$refs.plot) {
-      this.resizeObserver = new ResizeObserver(() => this.measure());
-      this.resizeObserver.observe(this.$refs.plot);
-    }
   },
 
   beforeUnmount() {
     if (this.searchTimer) clearTimeout(this.searchTimer);
     if (this.saveTimer) clearTimeout(this.saveTimer);
-    if (this.resizeObserver) this.resizeObserver.disconnect();
+    this.releasePointer();
   },
 
   methods: {
@@ -309,28 +313,32 @@ export default {
     },
 
     // ---- geometry ----
+    //
+    // Two coordinate systems, deliberately. The curve and grid are drawn in
+    // viewBox units and stretched to the box; the handles are placed in
+    // percentages so they stay round. xPct/yPct are the source of truth and
+    // xFor/yForGain are simply those scaled into viewBox units, so the dots
+    // cannot drift away from the line they sit on.
 
-    measure() {
-      const el = this.$refs.plot;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.height > 0) {
-        this.W = Math.round(r.width);
-        this.H = Math.round(r.height);
-      }
+    xPct(hz) {
+      const lo = Math.log(F_MIN), hi = Math.log(F_MAX);
+      return ((Math.log(hz) - lo) / (hi - lo)) * 100;
+    },
+    // 0% is +limit dB at the top, 100% is -limit at the bottom. The 4% inset
+    // keeps a handle at either extreme fully inside the box.
+    yPct(db) {
+      const clamped = Math.max(-this.limit, Math.min(this.limit, db));
+      return 50 - (clamped / this.limit) * 46;
+    },
+    gainForPct(pct) {
+      return ((50 - pct) / 46) * this.limit;
     },
 
     xFor(hz) {
-      const lo = Math.log(F_MIN), hi = Math.log(F_MAX);
-      return ((Math.log(hz) - lo) / (hi - lo)) * this.W;
+      return (this.xPct(hz) / 100) * this.W;
     },
     yForGain(db) {
-      const half = this.H / 2;
-      return half - (Math.max(-this.limit, Math.min(this.limit, db)) / this.limit) * (half - 10);
-    },
-    gainForY(y) {
-      const half = this.H / 2;
-      return ((half - y) / (half - 10)) * this.limit;
+      return (this.yPct(db) / 100) * this.H;
     },
     label(hz) {
       return hz >= 1000 ? hz / 1000 + "k" : String(hz);
@@ -363,29 +371,47 @@ export default {
 
     // ---- dragging ----
 
+    /// Listeners go on the window rather than the handle, so a drag that runs
+    /// off the top or bottom of the plot keeps tracking instead of sticking at
+    /// wherever the pointer left the element.
     startDrag(index, event) {
+      event.preventDefault();
       this.dragging = index;
-      event.target.setPointerCapture?.(event.pointerId);
+      this.onMove = (e) => this.applyDrag(e);
+      this.onUp = () => this.endDrag();
+      window.addEventListener("pointermove", this.onMove);
+      window.addEventListener("pointerup", this.onUp);
+      window.addEventListener("pointercancel", this.onUp);
       this.applyDrag(event);
     },
-    onDrag(event) {
-      if (this.dragging === null) return;
-      this.applyDrag(event);
+    releasePointer() {
+      if (!this.onMove) return;
+      window.removeEventListener("pointermove", this.onMove);
+      window.removeEventListener("pointerup", this.onUp);
+      window.removeEventListener("pointercancel", this.onUp);
+      this.onMove = null;
+      this.onUp = null;
     },
     applyDrag(event) {
-      const svg = this.$refs.plot;
-      if (!svg) return;
-      const rect = svg.getBoundingClientRect();
-      // The SVG scales to its box, so translate the pointer into viewBox units.
-      const y = ((event.clientY - rect.top) / rect.height) * this.H;
-      const gain = Math.max(-this.limit, Math.min(this.limit, this.gainForY(y)));
+      const box = this.$refs.plot;
+      if (!box || this.dragging === null) return;
+      const rect = box.getBoundingClientRect();
+      if (rect.height <= 0) return;
+      const pct = ((event.clientY - rect.top) / rect.height) * 100;
+      const gain = Math.max(-this.limit, Math.min(this.limit, this.gainForPct(pct)));
       this.selected.manual[this.dragging] = Math.round(gain * 2) / 2;
       this.queueSave();
     },
     endDrag() {
       if (this.dragging === null) return;
       this.dragging = null;
+      this.releasePointer();
       this.queueSave(0);
+    },
+    nudge(index, delta) {
+      const next = this.selected.manual[index] + delta;
+      this.selected.manual[index] = Math.max(-this.limit, Math.min(this.limit, next));
+      this.queueSave();
     },
 
     // ---- persistence ----
@@ -591,17 +617,29 @@ export default {
 .cardnote { color: #8d9591; font-size: 11px; flex: 1; }
 .cardhead .ghost { margin-left: auto; }
 
-.regions { display: flex; gap: 2px; margin-bottom: 6px; }
+/* 42px of y-axis labels plus the 8px plotwrap gap, so the region headers line
+   up with the plot underneath them rather than with the card edge. */
+.regions { display: flex; gap: 2px; margin: 0 0 6px 50px; }
 .region { background: #252927; color: #8d9591; font-size: 10px;
           letter-spacing: .6px; text-align: center; padding: 5px 0; }
 
 .plotwrap { display: flex; gap: 8px; }
-.ylabels { display: flex; flex-direction: column; justify-content: space-between;
-           color: #6b736f; font-size: 10px; height: 220px; padding: 2px 0;
-           font-variant-numeric: tabular-nums; flex: 0 0 auto; }
-.plot { display: block; width: 100%; height: 220px; background: #252927; touch-action: none; }
-.handle { cursor: ns-resize; }
-.handle:hover { r: 11; }
+.ylabels { position: relative; width: 42px; height: 220px; flex: 0 0 auto; }
+.ylabels span { position: absolute; right: 0; transform: translateY(-50%);
+                color: #6b736f; font-size: 10px; white-space: nowrap;
+                font-variant-numeric: tabular-nums; }
+.plotbox { position: relative; width: 100%; height: 220px; background: #252927;
+           touch-action: none; }
+.plot { display: block; width: 100%; height: 100%; }
+
+/* Handles are HTML, not SVG, so preserveAspectRatio="none" on the plot cannot
+   squash them into ovals. Positioned in percent, centred on their own point. */
+.handle { position: absolute; width: 16px; height: 16px; padding: 0;
+          margin: 0; border-radius: 50%; border: 2px solid #1b1f1e;
+          transform: translate(-50%, -50%); cursor: ns-resize;
+          touch-action: none; transition: width .1s, height .1s; }
+.handle:hover, .handle:focus-visible { width: 20px; height: 20px; outline: none; }
+.handle.dragging { width: 22px; height: 22px; box-shadow: 0 0 0 4px rgba(89,177,182,.25); }
 
 .plotcol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .xlabels { position: relative; height: 16px; margin-top: 3px; }
