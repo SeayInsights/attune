@@ -58,6 +58,19 @@ pub fn list_input_devices() -> Vec<String> {
     }
 }
 
+/// Every output device the host can see.
+///
+/// Headphone correction is applied per output endpoint, and the names have to
+/// match what Windows reports exactly -- Equalizer APO matches its `Device:`
+/// directive against them.
+pub fn list_output_devices() -> Vec<String> {
+    let host = cpal::default_host();
+    match host.output_devices() {
+        Ok(devices) => devices.filter_map(|d| d.name().ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// Find an input device whose name contains `needle`, case-insensitively.
 ///
 /// Substring rather than exact match because Windows device names carry the

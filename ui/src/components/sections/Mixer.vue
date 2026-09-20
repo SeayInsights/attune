@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <CenteredContainer>
     <MixAssignment v-if="submixEnabled()"/>
 
@@ -37,6 +37,8 @@
               v-show="!submixEnabled() || !submixHide.includes(item)"
       />
     </GroupContainer>
+
+    <AttuneHeadphones />
   </CenteredContainer>
 </template>
 
@@ -56,10 +58,11 @@ import GroupContainer from "@/components/containers/GroupContainer.vue";
 import SubmixSlider from "@/components/slider/SubmixSlider.vue";
 import CenteredContainer from "@/components/containers/CenteredContainer.vue";
 import MixAssignment from "@/components/sections/mixer/MixAssignment.vue";
+import AttuneHeadphones from "@/components/sections/mixer/AttuneHeadphones.vue";
 
 export default {
   name: "MixerTop",
-  components: {MixAssignment, CenteredContainer, SubmixSlider, GroupContainer, Slider},
+  components: {AttuneHeadphones, MixAssignment, CenteredContainer, SubmixSlider, GroupContainer, Slider},
 
   data() {
     return {

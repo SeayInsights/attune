@@ -19,3 +19,4 @@ actix-web = "4.11"
 attune-control = { path = "../attune-control" }
 attune-analysis = { path = "../attune-analysis" }
 attune-tuner = { path = "../attune-tuner" }
+attune-eq = { path = "../attune-eq" }

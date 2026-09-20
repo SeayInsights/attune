@@ -654,6 +654,7 @@ dependencies = [
  "actix-web",
  "attune-analysis",
  "attune-control",
+ "attune-eq",
  "attune-tuner",
  "log",
  "serde",

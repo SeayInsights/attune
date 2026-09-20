@@ -29,12 +29,15 @@ use attune_control::diagnose::diagnose;
 use attune_tuner::{apply, derive, targets};
 use serde::{Deserialize, Serialize};
 
+pub mod eq;
+
 /// Register Attune's routes.
 pub fn services(cfg: &mut web::ServiceConfig) {
     cfg.service(state)
         .service(list_targets)
         .service(devices)
-        .service(tune);
+        .service(tune)
+        .configure(eq::services);
 }
 
 #[derive(Serialize)]
