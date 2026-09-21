@@ -26,17 +26,40 @@ $ui = Join-Path $repo 'ui'
 $webContent = Join-Path $repo 'daemon/web-content'
 
 # --- Node ---------------------------------------------------------------
+#
+# Order matters. A previously fetched portable Node wins so a machine that has
+# one keeps building against the same one. Otherwise an already-installed Node
+# is used -- a CI runner has one, and downloading a second is a network round
+# trip that can fail, which is how the first attune-v1.0.0 release build died.
+# Fetching is the last resort, for a developer with no Node at all.
 
 $nodeDir = Get-ChildItem $tools -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -like 'node-*-win-x64' } |
     Select-Object -First 1 -ExpandProperty FullName
 
-if (-not $nodeDir) {
+if (-not $nodeDir -and (Get-Command node -ErrorAction SilentlyContinue)) {
+    Write-Host 'Using the Node already on PATH.'
+}
+elseif (-not $nodeDir) {
     Write-Host 'Fetching portable Node...'
     New-Item -ItemType Directory -Force -Path $tools | Out-Null
 
-    $lts = (Invoke-RestMethod -Uri 'https://nodejs.org/dist/index.json' |
-        Where-Object { $_.lts -ne $false } | Select-Object -First 1).version
+    # Every release carries an `lts` field: the codename once it is an LTS,
+    # and JSON false until then. Match the codename explicitly rather than
+    # testing `-ne $false`, which compares a string against a bool and leans
+    # on coercion to do the right thing.
+    #
+    # The release build that died here got a 400, which is what this URL
+    # returns when the version interpolates to nothing. Why it was empty on
+    # the runner is NOT established: `-ne $false` was the obvious suspect and
+    # it does not reproduce -- checked against pwsh 7.7, where old and new
+    # selectors both return the same version out of 287 matches. So the throw
+    # below matters more than the selector does. It turns an unresolvable
+    # version into a message that says so, instead of a malformed URL.
+    $index = Invoke-RestMethod -Uri 'https://nodejs.org/dist/index.json'
+    $lts = ($index | Where-Object { $_.lts -is [string] -and $_.lts } |
+        Select-Object -First 1).version
+    if (-not $lts) { throw 'Could not determine the current Node LTS version' }
 
     $zip = Join-Path $tools 'node.zip'
     Invoke-WebRequest -Uri "https://nodejs.org/dist/$lts/node-$lts-win-x64.zip" `
@@ -49,7 +72,10 @@ if (-not $nodeDir) {
         Select-Object -First 1 -ExpandProperty FullName
 }
 
-$env:PATH = "$nodeDir;$env:PATH"
+if ($nodeDir) { $env:PATH = "$nodeDir;$env:PATH" }
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    throw 'No node on PATH after resolution'
+}
 Write-Host "Node $(node --version), npm $(npm --version)"
 
 # --- Build --------------------------------------------------------------
