@@ -85,9 +85,13 @@ jobs:
         id: iscc
         shell: pwsh
         run: |
+          # Per-user last: that is where a developer's own install lands
+          # (this repo's author has it under LOCALAPPDATA), so the same list
+          # works when the script is run by hand off a runner.
           $candidates = @(
             "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
           )
           $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) {
