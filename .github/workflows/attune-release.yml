@@ -20,12 +20,14 @@ on:
     # a namespace of their own rather than colliding with the history they
     # were forked from. The installer still reports a plain 1.0.0.
     tags: [ 'attune-v*' ]
+  # No inputs. A dispatch run builds the installer and uploads it as an
+  # artifact; it cannot publish. The `publish: true` input this used to carry
+  # reached action-gh-release from any branch while the tag/AppVersion guard
+  # below -- which keys off the ref -- sat skipped, so a dispatch could create
+  # attune-v<version> pointing at an arbitrary commit, or attach to a release
+  # already published under that tag. Releases come from a tag, which always
+  # runs the guard. Testing the build needs the artifact, not a release.
   workflow_dispatch:
-    inputs:
-      publish:
-        description: "Create a draft GitHub release from this build"
-        type: boolean
-        default: false
 
 jobs:
   installer:
@@ -109,12 +111,29 @@ jobs:
       - name: Build the installer
         shell: pwsh
         run: |
+          # target/ is restored from cache, and restore-keys
+          # `windows-cargo-release-` matches any earlier run -- so a previous
+          # run's attune-setup.exe can already be sitting at this path. Testing
+          # that the file EXISTS would then pass on a stale artifact and publish
+          # a previous version's installer under this release's name. Clear the
+          # directory and check the timestamp: existence is not freshness.
+          $exe = "target/installer/attune-setup.exe"
+          if (Test-Path "target/installer") {
+            Write-Host "Clearing a cached target/installer before building."
+            Remove-Item "target/installer" -Recurse -Force
+          }
+          $start = Get-Date
+
           & "${{ steps.iscc.outputs.path }}" ci/attune.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
-          $exe = "target/installer/attune-setup.exe"
+
           if (-not (Test-Path $exe)) { throw "ISCC reported success but produced no $exe" }
+          $written = (Get-Item $exe).LastWriteTime
+          if ($written -lt $start) {
+            throw "$exe predates this step ($written < $start) -- it was not built by this run"
+          }
           $mb = [math]::Round((Get-Item $exe).Length / 1MB, 2)
-          Write-Host "attune-setup.exe -- $mb MB"
+          Write-Host "attune-setup.exe -- $mb MB, written $written"
 
       # Uploaded on every run, tag or not, so a dispatch build is downloadable
       # without publishing anything.
@@ -127,7 +146,7 @@ jobs:
 
       # Draft on purpose: someone writes the release notes and presses publish.
       - name: Publish release draft
-        if: startsWith(github.ref, 'refs/tags/attune-v') || inputs.publish
+        if: startsWith(github.ref, 'refs/tags/attune-v')
         uses: softprops/action-gh-release@v2
         with:
           name: Attune ${{ steps.version.outputs.version }}
