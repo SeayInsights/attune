@@ -266,7 +266,10 @@ mod tests {
                 enabled: true,
             },
         );
-        assert_eq!(decide(&rules, Some("cs2.exe"), "PC"), Some("Earlier".into()));
+        assert_eq!(
+            decide(&rules, Some("cs2.exe"), "PC"),
+            Some("Earlier".into())
+        );
     }
 
     #[test]

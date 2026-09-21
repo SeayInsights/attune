@@ -127,7 +127,10 @@ impl fmt::Display for SpatialError {
             Self::NotInstalled {
                 format,
                 requirement,
-            } => write!(f, "{format} is not installed on this machine. {requirement}"),
+            } => write!(
+                f,
+                "{format} is not installed on this machine. {requirement}"
+            ),
         }
     }
 }
@@ -351,7 +354,8 @@ where
 /// Every active render endpoint, as (friendly name, WinRT device id).
 fn endpoints() -> Result<Vec<(String, String)>, SpatialError> {
     unsafe {
-        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
         let collection = enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)?;
 
         let mut out = Vec::new();
@@ -363,7 +367,10 @@ fn endpoints() -> Result<Vec<(String, String)>, SpatialError> {
                 SpatialError::Windows(format!("an endpoint id was not valid UTF-16: {e}"))
             })?;
             let name = friendly_name(&device)?;
-            out.push((name, format!("\\\\?\\SWD#MMDEVAPI#{id}#{MMDEVAPI_INTERFACE}")));
+            out.push((
+                name,
+                format!("\\\\?\\SWD#MMDEVAPI#{id}#{MMDEVAPI_INTERFACE}"),
+            ));
         }
         Ok(out)
     }
@@ -555,7 +562,9 @@ mod tests {
 
         // And a real format must not. The GUID is the one this machine
         // reports for Windows Sonic.
-        assert!(!is_off("Windows.Media.Audio.SpatialAudioFormat.WindowsSonic"));
+        assert!(!is_off(
+            "Windows.Media.Audio.SpatialAudioFormat.WindowsSonic"
+        ));
         assert!(!is_off("{B53D940C-B846-4831-9F76-D102B9B725A0}"));
     }
 
@@ -564,7 +573,9 @@ mod tests {
     /// machine without Dolby Access accepts the change and ignores it.
     #[test]
     fn an_unapplied_format_reports_what_it_needs() {
-        let sonic = SpatialAudioFormatSubtype::WindowsSonic().unwrap().to_string();
+        let sonic = SpatialAudioFormatSubtype::WindowsSonic()
+            .unwrap()
+            .to_string();
         let (label, requirement) = describe(&sonic);
         assert_eq!(label, "Windows Sonic for Headphones");
         assert!(requirement.contains("Free"), "got: {requirement}");
@@ -601,7 +612,11 @@ mod tests {
     #[test]
     fn a_format_windows_provides_needs_no_package() {
         assert!(provider_present(&entry(None), "", &[]));
-        assert!(provider_present(&entry(None), "", &["Something.Else_abc".into()]));
+        assert!(provider_present(
+            &entry(None),
+            "",
+            &["Something.Else_abc".into()]
+        ));
     }
 
     /// The case this was built for: no Dolby Access, so do not offer Dolby and
@@ -612,7 +627,11 @@ mod tests {
             "Microsoft.WindowsCalculator_8wekyb3d8bbwe".to_string(),
             "SomeVendor.SomethingElse_1234".to_string(),
         ];
-        assert!(!provider_present(&entry(Some("DolbyAccess")), "", &installed));
+        assert!(!provider_present(
+            &entry(Some("DolbyAccess")),
+            "",
+            &installed
+        ));
     }
 
     /// Matching is a substring and case-insensitive, because the family name
@@ -620,8 +639,16 @@ mod tests {
     #[test]
     fn the_package_match_ignores_the_publisher_hash_and_case() {
         let installed = vec!["DolbyLaboratories.DolbyAccess_rz1tebttyb220".to_string()];
-        assert!(provider_present(&entry(Some("DolbyAccess")), "", &installed));
-        assert!(provider_present(&entry(Some("dolbyaccess")), "", &installed));
+        assert!(provider_present(
+            &entry(Some("DolbyAccess")),
+            "",
+            &installed
+        ));
+        assert!(provider_present(
+            &entry(Some("dolbyaccess")),
+            "",
+            &installed
+        ));
     }
 
     /// A renderer installed by a laptop vendor rather than from the Store
@@ -630,9 +657,11 @@ mod tests {
     #[test]
     fn a_format_that_is_already_active_counts_as_present() {
         let active = "{11111111-0000-0000-0000-000000000000}";
-        assert!(provider_present(&entry(Some("NeverInstalled")), active, &[
-            "Microsoft.WindowsCalculator_8wekyb3d8bbwe".to_string()
-        ]));
+        assert!(provider_present(
+            &entry(Some("NeverInstalled")),
+            active,
+            &["Microsoft.WindowsCalculator_8wekyb3d8bbwe".to_string()]
+        ));
     }
 
     /// Not being able to read the package list is not evidence of absence.
@@ -649,7 +678,10 @@ mod tests {
     #[test]
     fn every_described_format_comes_from_windows() {
         let table = known();
-        assert!(!table.is_empty(), "Windows offered no spatial formats at all");
+        assert!(
+            !table.is_empty(),
+            "Windows offered no spatial formats at all"
+        );
         for entry in table {
             assert!(
                 !entry.subtype.to_string().is_empty(),

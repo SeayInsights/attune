@@ -316,7 +316,6 @@ fn write_config(store: &Store, profile: &str) -> Result<usize, String> {
 
     let buses = bus_curves(store, profile);
 
-
     // Writing while bypassed would silently un-bypass, which is the opposite
     // of what someone holding the compare button asked for. The settings are
     // still saved; only the file APO reads is left alone.

@@ -272,8 +272,12 @@ fn report(message: &str) {
     // for one call. MB_ICONERROR | MB_OK.
     #[link(name = "user32")]
     unsafe extern "system" {
-        fn MessageBoxW(hwnd: *mut core::ffi::c_void, text: *const u16, caption: *const u16, kind: u32)
-        -> i32;
+        fn MessageBoxW(
+            hwnd: *mut core::ffi::c_void,
+            text: *const u16,
+            caption: *const u16,
+            kind: u32,
+        ) -> i32;
     }
 
     let text = wide(message);

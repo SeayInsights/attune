@@ -637,7 +637,6 @@ mod tests {
         assert!(!config.contains("Device:"));
     }
 
-
     /// The stock APO install ships a preamp and a bass-boosting example, both
     /// of which load before Attune's config and colour every measurement.
     #[test]

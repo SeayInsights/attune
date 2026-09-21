@@ -104,12 +104,10 @@ impl Attachment {
     /// A sentence for someone who has not read any of this.
     pub fn explain(&self) -> String {
         if !self.installed {
-            return "Equalizer APO is not installed, so no correction is running."
-                .to_string();
+            return "Equalizer APO is not installed, so no correction is running.".to_string();
         }
         if self.healthy() {
-            return "Equalizer APO is attached to every endpoint it was set up on."
-                .to_string();
+            return "Equalizer APO is attached to every endpoint it was set up on.".to_string();
         }
 
         // Naming the endpoints matters. "Something is wrong" sends someone
@@ -159,11 +157,7 @@ pub fn check() -> Attachment {
             detached.push(name.clone().unwrap_or_else(|| id.clone()));
         }
 
-        endpoints.push(Endpoint {
-            id,
-            name,
-            attached,
-        });
+        endpoints.push(Endpoint { id, name, attached });
     }
 
     endpoints.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
@@ -367,7 +361,10 @@ mod tests {
             if endpoint.attached
                 && let Some(name) = &endpoint.name
             {
-                assert!(!a.detached.contains(name), "{name} is both attached and not");
+                assert!(
+                    !a.detached.contains(name),
+                    "{name} is both attached and not"
+                );
             }
         }
     }

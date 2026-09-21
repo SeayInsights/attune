@@ -284,9 +284,7 @@ fn spawn_meter(
             move |data: &[f32], _| {
                 meter.feed(data);
                 if let Ok(mut shared) = shared_for_callback.lock() {
-                    shared
-                        .levels
-                        .insert(name_for_callback.clone(), meter.level);
+                    shared.levels.insert(name_for_callback.clone(), meter.level);
                 }
             },
             move |e| log::debug!("meter stream error: {e}"),
@@ -373,9 +371,7 @@ mod tests {
     #[test]
     fn a_sine_reads_three_db_below_its_peak() {
         let mut meter = BusMeter::new();
-        let samples: Vec<f32> = (0..48_000)
-            .map(|i| (i as f32 * 0.1).sin() * 0.5)
-            .collect();
+        let samples: Vec<f32> = (0..48_000).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
 
         meter.feed(&samples);
         std::thread::sleep(RMS_WINDOW);
