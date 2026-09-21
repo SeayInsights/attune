@@ -2,8 +2,11 @@
 
 Measurement-based microphone and headphone tuning for TC-Helicon GoXLR hardware.
 
-> **Status: early development.** The control layer is being built. Nothing here is
-> ready to use yet. Watch the repository rather than downloading it.
+> **Status: working, early.** It installs, runs as a desktop application, and the
+> mic tuner, per-channel headphone EQ, crossfeed, meters and MCP server all work
+> against real hardware. It has been used and debugged on exactly one machine --
+> a GoXLR Full with a Shure MV7 and DT 990 Pro 250 ohm -- so expect rough edges
+> anywhere your setup differs from that.
 
 ## What this is
 
@@ -28,8 +31,15 @@ Attune measures instead.
   each one simultaneously — a competitive profile on Game while Music runs a
   music-tuned curve. Includes cut-only curve generation for high-impedance
   headphones, where boosting costs amplifier headroom you may not have.
-- **Per-app routing.** Assigns applications to GoXLR buses automatically.
-- **Profiles.** One switch changes mic settings, EQ curves and routing together.
+- **Crossfeed.** Bauer-style, to soften the hard left/right split headphones
+  impose. Deliberately not called spatial audio: it will not help you hear
+  someone behind you. For that, Attune switches Windows' own spatial formats --
+  Windows Sonic and, if you own them, Dolby Atmos or DTS Headphone:X -- through
+  the documented API rather than reimplementing any of it.
+- **Live meters.** Per channel, read through WASAPI loopback, so the level you
+  are tuning against is visible rather than guessed at.
+- **Per-game profiles.** Watches the foreground application and loads the GoXLR
+  profile you mapped to it. Off until you switch it on.
 - **Bring your own AI.** Attune exposes an MCP server. Point your own model at it
   if you want conversational tuning. No API keys, no model code and no vendor
   dependency ship with this software, and everything works with no AI configured.
@@ -41,11 +51,38 @@ in the signal path, which is what keeps monitoring at hardware latency. Pulling 
 mic into Windows to process it in software would mean hearing yourself 20–50 ms
 late, and no tuning quality is worth that.
 
+## Installing
+
+Download `attune-setup.exe` from the releases page and run it. It installs per
+user, so it does not need administrator rights, and it will tell you if anything
+it depends on is missing rather than failing later.
+
+To build the installer yourself you need [Inno Setup](https://jrsoftware.org/isinfo.php)
+6 or newer:
+
+```
+powershell -File scripts/build-ui.ps1     # builds the Vue UI into daemon/web-content
+cargo build --release
+ISCC.exe ci/attune.iss                    # writes target/installer/attune-setup.exe
+```
+
+The installer script is [`ci/attune.iss`](ci/attune.iss). It is kept separate from
+upstream's own script so a merge from upstream touches their file and not this one.
+
 ## Requirements
 
 - A TC-Helicon GoXLR or GoXLR Mini
 - Windows 11
 - The official TC-Helicon USB driver
+- **Equalizer APO**, for the headphone side only
+
+Attune's headphone corrections, crossfeed and loudness plugin are all written as
+[Equalizer APO](https://sourceforge.net/projects/equalizerapo/) configuration
+rather than processed by Attune itself. That is what keeps them out of the signal
+path and adds no latency to game audio -- and it also means that without APO
+installed, the Headphones tab will save settings that never reach your
+headphones. The installer says so and offers the download. Everything else --
+the mixer, the mic chain, the measurement tools -- works without it.
 
 Attune does **not** bundle the vendor driver — no redistribution licence has been
 granted for it. If you already have the official GoXLR app installed, you have the
@@ -66,8 +103,10 @@ If you want a faithful replacement for the official GoXLR app and nothing more,
 
 ## Licence
 
-MIT, inherited from upstream. See [`LICENSE`](LICENSE), [`LICENSE-3RD-PARTY`](LICENSE-3RD-PARTY),
-[`NOTICE`](NOTICE) and [`docs/licensing.md`](docs/licensing.md).
+MIT, inherited from upstream and retained for the additions. The `LICENSE` file
+carries both copyrights, as the licence requires. See [`LICENSE`](LICENSE),
+[`LICENSE-3RD-PARTY`](LICENSE-3RD-PARTY), [`NOTICE`](NOTICE) and
+[`docs/licensing.md`](docs/licensing.md).
 
 ## Disclaimer
 
