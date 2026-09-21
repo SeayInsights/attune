@@ -17,7 +17,7 @@
       <div class="bustabs">
         <button v-for="b in buses" :key="b.name"
                 class="bustab" :class="{ on: b.name === selectedName }"
-                @click="selectedName = b.name">
+                @click="selectedName = b.name; crossfeedDraft = null; headroomDraft = null">
           {{ b.name }}
           <span class="dot" v-if="!isFlat(b)"></span>
           <!-- Live level, read off the bus through Windows loopback. -->
@@ -142,12 +142,12 @@
             Auto headroom
           </label>
           <input class="hrslider" type="range" min="-24" max="0" step="0.5"
-                 :value="-selected.headroom_db"
+                 :value="headroomDraft !== null ? headroomDraft : -selected.headroom_db"
                  :disabled="busy || selected.headroom_auto"
-                 @input="setHeadroom(parseFloat($event.target.value))"/>
+                 @input="tweakHeadroom($event.target.value)"/>
           <span class="cardnote hrval"
                 :class="{ risky: clipping }">
-            &minus;{{ selected.headroom_db.toFixed(1) }} dB
+            &minus;{{ (headroomDraft !== null ? -headroomDraft : selected.headroom_db).toFixed(1) }} dB
             <template v-if="clipping">&mdash; will clip above
               {{ selected.peak_boost_db.toFixed(1) }} dB</template>
           </span>
@@ -313,23 +313,23 @@
             <div class="macro">
               <label>level</label>
               <input type="range" :min="limits.level_db[0]" :max="limits.level_db[1]" step="0.5"
-                     :value="busExtras.crossfeed.level_db" :disabled="extrasBusy"
-                     @change="tweakCrossfeed('level_db', $event.target.value)"/>
-              <span class="val">{{ busExtras.crossfeed.level_db.toFixed(1) }}</span>
+                     :value="cf.level_db"
+                     @input="tweakCrossfeed('level_db', $event.target.value)"/>
+              <span class="val">{{ cf.level_db.toFixed(1) }}</span>
             </div>
             <div class="macro">
               <label>cutoff</label>
               <input type="range" :min="limits.cutoff_hz[0]" :max="limits.cutoff_hz[1]" step="25"
-                     :value="busExtras.crossfeed.cutoff_hz" :disabled="extrasBusy"
-                     @change="tweakCrossfeed('cutoff_hz', $event.target.value)"/>
-              <span class="val">{{ busExtras.crossfeed.cutoff_hz.toFixed(0) }}</span>
+                     :value="cf.cutoff_hz"
+                     @input="tweakCrossfeed('cutoff_hz', $event.target.value)"/>
+              <span class="val">{{ cf.cutoff_hz.toFixed(0) }}</span>
             </div>
             <div class="macro">
               <label>delay</label>
               <input type="range" :min="limits.delay_us[0]" :max="limits.delay_us[1]" step="10"
-                     :value="busExtras.crossfeed.delay_us" :disabled="extrasBusy"
-                     @change="tweakCrossfeed('delay_us', $event.target.value)"/>
-              <span class="val">{{ busExtras.crossfeed.delay_us.toFixed(0) }}</span>
+                     :value="cf.delay_us"
+                     @input="tweakCrossfeed('delay_us', $event.target.value)"/>
+              <span class="val">{{ cf.delay_us.toFixed(0) }}</span>
             </div>
           </template>
 
@@ -528,6 +528,19 @@ export default {
       newExe: "",
       levels: {},
       copiedMcp: false,
+      // A local copy of the crossfeed while it is being dragged.
+      //
+      // The sliders used to bind straight to server state and commit on
+      // change, which fires only when the mouse is released. So the number
+      // never moved during a drag, and any re-render in between -- the meters
+      // repaint ten times a second -- put the thumb back where the server
+      // still thought it was. It read as the control snapping to defaults.
+      crossfeedDraft: null,
+      crossfeedTimer: null,
+      // Same reason as crossfeedDraft: bound straight to server state, a
+      // slider cannot survive a reload landing mid-drag.
+      headroomDraft: null,
+      headroomTimer: null,
       showMcp: false,
       meterTimer: null,
       autoswitchTimer: null,
@@ -594,6 +607,11 @@ export default {
     },
     canAddRule() {
       return Boolean(this.pendingExe && this.profile);
+    },
+    /// What the crossfeed sliders read: the draft while dragging, the saved
+    /// value otherwise.
+    cf() {
+      return this.crossfeedDraft || this.busExtras.crossfeed;
     },
     busExtras() {
       return (this.selected && this.selected.extras) || { crossfeed: null, plugin: null };
@@ -836,7 +854,20 @@ export default {
       this.selected.macros[which] = parseFloat(value);
       this.queueSave();
     },
+    tweakHeadroom(value) {
+      this.headroomDraft = parseFloat(value);
+      if (this.headroomTimer) clearTimeout(this.headroomTimer);
+      this.headroomTimer = setTimeout(async () => {
+        await this.setHeadroom(this.headroomDraft);
+        this.headroomDraft = null;
+      }, 250);
+    },
+
     async setHeadroom(db) {
+      if (db === null) {
+        if (this.headroomTimer) clearTimeout(this.headroomTimer);
+        this.headroomDraft = null;
+      }
       try {
         await this.getJSON("/api/attune/eq/set", {
           method: "POST",
@@ -1003,6 +1034,11 @@ export default {
     },
 
     async setCrossfeed(settings) {
+      if (this.crossfeedTimer) {
+        clearTimeout(this.crossfeedTimer);
+        this.crossfeedTimer = null;
+      }
+      this.crossfeedDraft = null;
       this.extrasBusy = true;
       try {
         await this.getJSON("/api/attune/extras/crossfeed", {
@@ -1022,10 +1058,23 @@ export default {
       }
     },
 
+    /// Move immediately, save shortly after.
+    ///
+    /// The draft updates on every input event so the slider and its number
+    /// track the pointer, and the write is debounced so one drag is one
+    /// request rather than fifty.
     tweakCrossfeed(field, value) {
-      const next = { ...this.busExtras.crossfeed };
+      const next = { ...(this.crossfeedDraft || this.busExtras.crossfeed) };
       next[field] = parseFloat(value);
-      this.setCrossfeed(next);
+      this.crossfeedDraft = next;
+
+      if (this.crossfeedTimer) clearTimeout(this.crossfeedTimer);
+      this.crossfeedTimer = setTimeout(async () => {
+        await this.setCrossfeed(next);
+        // Released only after the save, so a reload cannot overwrite the
+        // position mid-drag.
+        this.crossfeedDraft = null;
+      }, 250);
     },
 
     async setPlugin(plugin) {
