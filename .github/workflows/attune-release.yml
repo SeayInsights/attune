@@ -1,0 +1,129 @@
+# Builds Attune's installer and publishes it.
+#
+# Separate from the inherited release.yml on purpose. That one still builds
+# upstream's product -- NSIS, goxlr-utility-<version>.exe, a checkout of the
+# goxlr-utility UI wrapper, plus .deb/.rpm/.pkg for platforms Attune does not
+# ship to. Rewriting it would guarantee a conflict on every upstream merge, so
+# it is left alone and this builds the Attune artifact beside it.
+#
+# The version is ci/attune.iss's AppVersion, which is the one place Attune's
+# version is written down. On a tag push the two must agree, and the job fails
+# if they do not -- a release whose installer reports a different number than
+# its tag is worse than no release.
+
+name: Attune Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create a draft GitHub release from this build"
+        type: boolean
+        default: false
+
+jobs:
+  installer:
+    name: Build installer
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Preparing Cache..
+        uses: actions/cache@v4
+        continue-on-error: false
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-release-
+
+      # The version the installer will report, read from the installer script
+      # rather than passed in, so there is still exactly one place it lives.
+      - name: Read Attune version
+        id: version
+        shell: pwsh
+        run: |
+          $iss = Get-Content ci/attune.iss -Raw
+          if ($iss -notmatch '(?m)^#define\s+AppVersion\s+"([^"]+)"') {
+            throw "No AppVersion in ci/attune.iss"
+          }
+          $version = $Matches[1]
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Attune $version"
+
+      # A tag that disagrees with the installer is a mislabelled release.
+      - name: Check the tag matches
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v',''
+          $iss = "${{ steps.version.outputs.version }}"
+          if ($tag -ne $iss) {
+            throw "Tag v$tag does not match ci/attune.iss AppVersion $iss"
+          }
+
+      # The daemon embeds daemon/web-content with include_dir, so the UI has to
+      # be on disk before cargo runs. Built from ui/ rather than trusting the
+      # committed copy, so a release cannot ship a UI nobody rebuilt.
+      - name: Build the UI
+        shell: pwsh
+        run: ./scripts/build-ui.ps1
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Locate Inno Setup
+        id: iscc
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            Write-Host "Inno Setup not on the image; installing."
+            choco install innosetup --no-progress -y
+            $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) { throw "Inno Setup not found after install" }
+          "path=$iscc" >> $env:GITHUB_OUTPUT
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          & "${{ steps.iscc.outputs.path }}" ci/attune.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+          $exe = "target/installer/attune-setup.exe"
+          if (-not (Test-Path $exe)) { throw "ISCC reported success but produced no $exe" }
+          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 2)
+          Write-Host "attune-setup.exe -- $mb MB"
+
+      # Uploaded on every run, tag or not, so a dispatch build is downloadable
+      # without publishing anything.
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: attune-setup-${{ steps.version.outputs.version }}
+          path: target/installer/attune-setup.exe
+          if-no-files-found: error
+
+      # Draft on purpose: someone writes the release notes and presses publish.
+      - name: Publish release draft
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Attune ${{ steps.version.outputs.version }}
+          tag_name: v${{ steps.version.outputs.version }}
+          draft: true
+          fail_on_unmatched_files: true
+          files: target/installer/attune-setup.exe
