@@ -30,8 +30,8 @@ $webContent = Join-Path $repo 'daemon/web-content'
 # Order matters. A previously fetched portable Node wins so a machine that has
 # one keeps building against the same one. Otherwise an already-installed Node
 # is used -- a CI runner has one, and downloading a second is a network round
-# trip that can fail, which is exactly how the first attune-v1.0.0 release
-# build died. Fetching is the last resort, for a developer with no Node at all.
+# trip that can fail, which is how the first attune-v1.0.0 release build died.
+# Fetching is the last resort, for a developer with no Node at all.
 
 $nodeDir = Get-ChildItem $tools -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -like 'node-*-win-x64' } |
@@ -45,10 +45,17 @@ elseif (-not $nodeDir) {
     New-Item -ItemType Directory -Force -Path $tools | Out-Null
 
     # Every release carries an `lts` field: the codename once it is an LTS,
-    # and JSON false until then. Match the codename rather than testing
-    # `-ne $false`, which compares a string against a bool and silently
-    # yields nothing on PowerShell 7 -- an empty version, then a 400 on a
-    # URL with a hole in it.
+    # and JSON false until then. Match the codename explicitly rather than
+    # testing `-ne $false`, which compares a string against a bool and leans
+    # on coercion to do the right thing.
+    #
+    # The release build that died here got a 400, which is what this URL
+    # returns when the version interpolates to nothing. Why it was empty on
+    # the runner is NOT established: `-ne $false` was the obvious suspect and
+    # it does not reproduce -- checked against pwsh 7.7, where old and new
+    # selectors both return the same version out of 287 matches. So the throw
+    # below matters more than the selector does. It turns an unresolvable
+    # version into a message that says so, instead of a malformed URL.
     $index = Invoke-RestMethod -Uri 'https://nodejs.org/dist/index.json'
     $lts = ($index | Where-Object { $_.lts -is [string] -and $_.lts } |
         Select-Object -First 1).version
