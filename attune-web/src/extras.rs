@@ -17,8 +17,8 @@ use std::sync::Mutex;
 use actix_web::{HttpResponse, Responder, get, post, web};
 use attune_control::autoswitch::{Rules, foreground_executable};
 use attune_control::client::DaemonClient;
-use attune_eq::crossfeed::{self, Crossfeed};
 use attune_eq::apo;
+use attune_eq::crossfeed::{self, Crossfeed};
 use serde::{Deserialize, Serialize};
 
 use crate::eq::BUSES;
@@ -149,7 +149,8 @@ async fn set_plugin(req: web::Json<PluginRequest>) -> impl Responder {
     };
 
     let plugin = req.plugin.clone();
-    if let Err(e) = crate::eq::update_extras(&targets, |extras| extras.plugin = plugin.clone()).await
+    if let Err(e) =
+        crate::eq::update_extras(&targets, |extras| extras.plugin = plugin.clone()).await
     {
         return error(&e);
     }

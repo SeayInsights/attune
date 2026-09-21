@@ -10,6 +10,12 @@ repository = { workspace = true }
 [dependencies]
 anyhow = { workspace = true }
 log = { workspace = true }
+
+# The window is WebView2, so these are Windows-only -- and gating them here is
+# what keeps GTK3 and WebKitGTK out of the Linux dependency graph. `tao` and
+# `wry` are the only two edges into it; without them `cargo check` on Linux
+# needs nothing beyond what upstream's workflow already installs.
+[target.'cfg(windows)'.dependencies]
 # Decoding the .ico at startup so the window and taskbar carry the icon. The
 # resource script gives the *file* an icon in Explorer; a window's icon is a
 # separate thing and has to be set explicitly.

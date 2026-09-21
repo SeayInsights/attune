@@ -10,7 +10,11 @@ jobs:
       - name: "Install Dependencies"
         run: |
           sudo apt-get update
-          sudo apt-get install libdbus-1-dev pkg-config libspeechd-dev
+          # libasound2-dev is Attune's, not upstream's: goxlr-audio takes cpal
+          # only on cfg(not(target_os = "linux")) and uses PulseAudio here,
+          # but attune-analysis captures through cpal on every platform, so
+          # alsa-sys is in this graph and needs its headers.
+          sudo apt-get install libdbus-1-dev pkg-config libspeechd-dev libasound2-dev
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:

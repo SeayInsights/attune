@@ -40,6 +40,8 @@
 //! which tool fixes it; reinstalling APO's own configurator is the supported
 //! path and it is the one that knows what to restore.
 
+// Only the registry readers below use these, and those are Windows-only.
+#[cfg(windows)]
 use std::collections::BTreeMap;
 
 use serde::Serialize;
@@ -50,6 +52,7 @@ use serde::Serialize;
 /// Compared case-insensitively: the registry is inconsistent about the case of
 /// hex digits in a GUID, and on this machine a single endpoint carries both
 /// spellings.
+#[cfg(windows)]
 const APO_CLSIDS: &[&str] = &[
     // EqualizerAPO Pre-Mix Class (stream effects).
     "{EACD2258-FCAC-4FF4-B36D-419E924A6D79}",
@@ -59,15 +62,19 @@ const APO_CLSIDS: &[&str] = &[
 
 /// The property-store keys that name an endpoint's effect CLSIDs: the stream,
 /// mode and endpoint effect slots respectively.
+#[cfg(windows)]
 const FX_CLSID_KEYS: &[&str] = &[
     "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5",
     "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},6",
     "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},7",
 ];
 
+#[cfg(windows)]
 const CHILD_APOS: &str = r"SOFTWARE\EqualizerAPO\Child APOs";
+#[cfg(windows)]
 const MMDEVICES: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio";
 /// PKEY_Device_FriendlyName, as the registry spells it.
+#[cfg(windows)]
 const FRIENDLY_NAME: &str = "{a45c254e-df1c-4efd-8020-67d146a850e0},2";
 
 /// One endpoint Equalizer APO believes it is installed on.
@@ -104,12 +111,10 @@ impl Attachment {
     /// A sentence for someone who has not read any of this.
     pub fn explain(&self) -> String {
         if !self.installed {
-            return "Equalizer APO is not installed, so no correction is running."
-                .to_string();
+            return "Equalizer APO is not installed, so no correction is running.".to_string();
         }
         if self.healthy() {
-            return "Equalizer APO is attached to every endpoint it was set up on."
-                .to_string();
+            return "Equalizer APO is attached to every endpoint it was set up on.".to_string();
         }
 
         // Naming the endpoints matters. "Something is wrong" sends someone
@@ -159,11 +164,7 @@ pub fn check() -> Attachment {
             detached.push(name.clone().unwrap_or_else(|| id.clone()));
         }
 
-        endpoints.push(Endpoint {
-            id,
-            name,
-            attached,
-        });
+        endpoints.push(Endpoint { id, name, attached });
     }
 
     endpoints.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
@@ -367,7 +368,10 @@ mod tests {
             if endpoint.attached
                 && let Some(name) = &endpoint.name
             {
-                assert!(!a.detached.contains(name), "{name} is both attached and not");
+                assert!(
+                    !a.detached.contains(name),
+                    "{name} is both attached and not"
+                );
             }
         }
     }

@@ -292,11 +292,8 @@ impl DaemonClient {
     /// state the command asked for, and for profile switching the difference
     /// would be silent -- the wrong voicing, with nothing to say so.
     pub async fn load_profile(&self, serial: &str, profile: &str) -> Result<(), ControlError> {
-        self.command(
-            serial,
-            GoXLRCommand::LoadProfile(profile.to_string(), true),
-        )
-        .await?;
+        self.command(serial, GoXLRCommand::LoadProfile(profile.to_string(), true))
+            .await?;
 
         let actual = self.mixer(serial).await?.profile_name;
         if !actual.eq_ignore_ascii_case(profile) {
