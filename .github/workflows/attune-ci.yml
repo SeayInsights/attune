@@ -51,3 +51,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Check the resolved Linux dependency graph
         run: bash ci/check-linux-graph.sh
+
+  release_workflow:
+    name: Release workflow invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pyyaml
+      - name: Check what can publish a release
+        run: python ci/check-release-workflow.py
