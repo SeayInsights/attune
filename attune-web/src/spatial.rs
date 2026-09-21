@@ -10,9 +10,15 @@
 use actix_web::{HttpResponse, Responder, get, post, web};
 use serde::Deserialize;
 
+// Only the Windows `set` handler fans a change out across every bus.
+#[cfg(windows)]
 use crate::eq::BUSES;
 
+/// The wire shape is the same on every platform on purpose -- the UI renders
+/// one form and the endpoint answers everywhere -- so off Windows the handler
+/// accepts these fields and reads none of them.
 #[derive(Deserialize)]
+#[cfg_attr(not(windows), allow(dead_code))]
 struct SetRequest {
     bus: String,
     /// A subtype string from a previous `state` call. Opaque to the UI.
