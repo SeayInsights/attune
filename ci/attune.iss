@@ -21,7 +21,13 @@
 ;      rather than absent.
 
 #define AppName "Attune"
-#define AppVersion "0.2.0"
+; Attune's own version, and the only place it is written down. The crates
+; still carry 1.2.4 -- that is goxlr-utility's number, inherited through the
+; workspace, and upstream's packaging reads it back with
+; `cargo pkgid -p goxlr-daemon`. Renumbering the crates would change what the
+; daemon reports to clients that were written against upstream, so the fork's
+; version lives here instead, on the artifact a user actually sees.
+#define AppVersion "1.0.0"
 #define DriverUrl "https://utility.frostycoolslug.com/update-site/drivers/"
 #define ApoUrl "https://sourceforge.net/projects/equalizerapo/"
 
