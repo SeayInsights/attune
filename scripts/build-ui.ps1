@@ -26,17 +26,33 @@ $ui = Join-Path $repo 'ui'
 $webContent = Join-Path $repo 'daemon/web-content'
 
 # --- Node ---------------------------------------------------------------
+#
+# Order matters. A previously fetched portable Node wins so a machine that has
+# one keeps building against the same one. Otherwise an already-installed Node
+# is used -- a CI runner has one, and downloading a second is a network round
+# trip that can fail, which is exactly how the first attune-v1.0.0 release
+# build died. Fetching is the last resort, for a developer with no Node at all.
 
 $nodeDir = Get-ChildItem $tools -Directory -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -like 'node-*-win-x64' } |
     Select-Object -First 1 -ExpandProperty FullName
 
-if (-not $nodeDir) {
+if (-not $nodeDir -and (Get-Command node -ErrorAction SilentlyContinue)) {
+    Write-Host 'Using the Node already on PATH.'
+}
+elseif (-not $nodeDir) {
     Write-Host 'Fetching portable Node...'
     New-Item -ItemType Directory -Force -Path $tools | Out-Null
 
-    $lts = (Invoke-RestMethod -Uri 'https://nodejs.org/dist/index.json' |
-        Where-Object { $_.lts -ne $false } | Select-Object -First 1).version
+    # Every release carries an `lts` field: the codename once it is an LTS,
+    # and JSON false until then. Match the codename rather than testing
+    # `-ne $false`, which compares a string against a bool and silently
+    # yields nothing on PowerShell 7 -- an empty version, then a 400 on a
+    # URL with a hole in it.
+    $index = Invoke-RestMethod -Uri 'https://nodejs.org/dist/index.json'
+    $lts = ($index | Where-Object { $_.lts -is [string] -and $_.lts } |
+        Select-Object -First 1).version
+    if (-not $lts) { throw 'Could not determine the current Node LTS version' }
 
     $zip = Join-Path $tools 'node.zip'
     Invoke-WebRequest -Uri "https://nodejs.org/dist/$lts/node-$lts-win-x64.zip" `
@@ -49,7 +65,10 @@ if (-not $nodeDir) {
         Select-Object -First 1 -ExpandProperty FullName
 }
 
-$env:PATH = "$nodeDir;$env:PATH"
+if ($nodeDir) { $env:PATH = "$nodeDir;$env:PATH" }
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    throw 'No node on PATH after resolution'
+}
 Write-Host "Node $(node --version), npm $(npm --version)"
 
 # --- Build --------------------------------------------------------------
